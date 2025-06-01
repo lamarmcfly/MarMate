@@ -1,0 +1,1480 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "workflow/initialize",
+        "options": {}
+      },
+      "id": "1a5f3af0-8c7d-4a3a-9b5c-e0d4c7b1f2e3",
+      "name": "Initialize Project Workflow",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract data from the webhook payload\nconst data = $input.item.json.body || $input.item.json;\n\n// Validate required fields\nif (!data.specId && !data.specification) {\n  throw new Error('Either specId or specification is required');\n}\n\n// Extract project information\nconst projectId = data.projectId || Date.now().toString(36) + Math.random().toString(36).substring(2);\nconst userId = data.userId || 'anonymous';\n\n// Prepare the project workflow data\nreturn {\n  projectId,\n  userId,\n  specId: data.specId || null,\n  specification: data.specification || null,\n  name: data.name || 'New Project',\n  description: data.description || '',\n  status: 'active',\n  createdAt: new Date().toISOString(),\n  updatedAt: new Date().toISOString(),\n  settings: data.settings || {},\n  metadata: data.metadata || {}\n};"
+      },
+      "id": "2b6f4bg1-9d8e-5b4b-0c6d-f1e5d8c2g3f4",
+      "name": "Prepare Project Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "projects",
+        "columns": "id, user_id, spec_id, name, description, status, created_at, updated_at, settings, metadata",
+        "additionalFields": {}
+      },
+      "id": "3c7g5ch2-0e9f-6c5c-1d7e-g2f6e9d3h4g5",
+      "name": "Store Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        650,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"Prepare Project Data\"].json[\"specId\"]}}",
+              "value2": null,
+              "operation": "notEqual"
+            }
+          ]
+        }
+      },
+      "id": "4d8h6di3-1f0g-7d6d-2e8f-h3g7f0e4i5h6",
+      "name": "Has Spec ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        850,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "specifications",
+        "columns": "*",
+        "additionalFields": {}
+      },
+      "id": "5e9i7ej4-2g1h-8e7e-3f9g-i4h8g1f5j6i7",
+      "name": "Fetch Specification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Combine project data with specification content\nconst projectData = $input.item.json;\nconst specData = $input.item.json.specification || $node[\"Fetch Specification\"].json[0].content;\n\n// Ensure we have specification data\nif (!specData) {\n  throw new Error('Failed to retrieve specification data');\n}\n\n// Merge the data\nreturn {\n  ...projectData,\n  specification: specData\n};"
+      },
+      "id": "6f0j8fk5-3h2i-9f8f-4g0h-j5i9h2g6k7j8",
+      "name": "Prepare Specification Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "operation": "create",
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 4000
+        }
+      },
+      "id": "7g1k9gl6-4i3j-0g9g-5h1i-k6j0i3h7l8k9",
+      "name": "Generate Task Breakdown",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1650,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "={{\"content\": `You are a project management expert. Break down the following project specification into detailed tasks, milestones, and dependencies.\n\nProject Specification:\n${JSON.stringify($json.specification, null, 2)}\n\nAnalyze the specification and provide a comprehensive task breakdown in the following JSON format:\n\n{\n  \"milestones\": [\n    {\n      \"id\": \"M1\",\n      \"name\": \"string\",\n      \"description\": \"string\",\n      \"start_date\": \"YYYY-MM-DD\",\n      \"end_date\": \"YYYY-MM-DD\",\n      \"sequence_order\": number\n    }\n  ],\n  \"tasks\": [\n    {\n      \"id\": \"T1\",\n      \"milestone_id\": \"M1\",\n      \"name\": \"string\",\n      \"description\": \"string\",\n      \"status\": \"not_started\",\n      \"priority\": \"medium\",\n      \"estimated_hours\": number,\n      \"sequence_order\": number\n    }\n  ],\n  \"dependencies\": [\n    {\n      \"predecessor_task_id\": \"T1\",\n      \"successor_task_id\": \"T2\",\n      \"dependency_type\": \"finish_to_start\"\n    }\n  ],\n  \"critical_path\": [\"T1\", \"T3\", \"T5\"],\n  \"estimated_duration_days\": number,\n  \"resource_categories\": [\n    {\n      \"category\": \"string\",\n      \"resources\": [\n        {\n          \"name\": \"string\",\n          \"description\": \"string\",\n          \"cost_estimate\": number,\n          \"url\": \"string\"\n        }\n      ]\n    }\n  ]\n}\n\nEnsure your response is valid JSON that can be parsed. The start date for the first milestone should be the current date (${new Date().toISOString().split('T')[0]}). Calculate realistic durations for tasks and milestones based on the project scope. Identify the critical path of tasks that will determine the project timeline. Include resource recommendations for tools, services, and technologies needed.`}"}
+      },
+      "id": "8h2l0hm7-5j4k-1h0h-6i2j-l7k1j4i8m9l0",
+      "name": "Prompt for Task Breakdown",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse the OpenAI response to extract the JSON task breakdown\nlet taskBreakdown;\ntry {\n  // Try to parse the completion text as JSON\n  const completionText = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n  taskBreakdown = JSON.parse(completionText);\n} catch (error) {\n  // If JSON parsing fails, try to extract JSON from the text\n  const completionText = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n  const jsonMatch = completionText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    try {\n      taskBreakdown = JSON.parse(jsonMatch[0]);\n    } catch (e) {\n      throw new Error(`Failed to parse task breakdown: ${e.message}`);\n    }\n  } else {\n    throw new Error('Could not extract JSON from the task breakdown');\n  }\n}\n\n// Update the project data with task breakdown\nreturn {\n  ...($input.item.json),\n  taskBreakdown\n};"
+      },
+      "id": "9i3m1in8-6k5l-2i1i-7j3k-m8l2k5j9n0m1",
+      "name": "Process Task Breakdown",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1850,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "0j4n2jo9-7l6m-3j2j-8k4l-n9m3l6k0o1n2",
+      "name": "Split Milestones",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract milestones from the task breakdown\nconst projectData = $input.item.json;\nconst milestones = projectData.taskBreakdown.milestones || [];\n\n// Return the milestones for batch processing\nreturn milestones.map(milestone => ({\n  ...milestone,\n  project_id: projectData.projectId,\n  status: 'not_started',\n  progress_percentage: 0,\n  created_at: new Date().toISOString(),\n  updated_at: new Date().toISOString()\n}));"
+      },
+      "id": "1k5o3kp0-8m7n-4k3k-9l5m-o0n4m7l1p2o3",
+      "name": "Prepare Milestones",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "milestones",
+        "columns": "id, project_id, name, description, start_date, end_date, status, progress_percentage, created_at, updated_at, sequence_order",
+        "additionalFields": {}
+      },
+      "id": "2l6p4lq1-9n8o-5l4l-0m6n-p1o5n8m2q3p4",
+      "name": "Store Milestones",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "3m7q5mr2-0o9p-6m5m-1n7o-q2p6o9n3r4q5",
+      "name": "Split Tasks",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract tasks from the task breakdown\nconst projectData = $input.item.json;\nconst tasks = projectData.taskBreakdown.tasks || [];\n\n// Return the tasks for batch processing\nreturn tasks.map(task => ({\n  ...task,\n  project_id: projectData.projectId,\n  due_date: null, // Will be calculated based on milestone dates\n  created_at: new Date().toISOString(),\n  updated_at: new Date().toISOString()\n}));"
+      },
+      "id": "4n8r6ns3-1p0q-7n6n-2o8p-r3q7p0o4s5r6",
+      "name": "Prepare Tasks",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "tasks",
+        "columns": "id, project_id, milestone_id, name, description, status, priority, estimated_hours, created_at, updated_at, sequence_order",
+        "additionalFields": {}
+      },
+      "id": "5o9s7ot4-2q1r-8o7o-3p9q-s4r8q1p5t6s7",
+      "name": "Store Tasks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "6p0t8pu5-3r2s-9p8p-4q0r-t5s9r2q6u7t8",
+      "name": "Split Dependencies",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract dependencies from the task breakdown\nconst projectData = $input.item.json;\nconst dependencies = projectData.taskBreakdown.dependencies || [];\n\n// Return the dependencies for batch processing\nreturn dependencies.map(dependency => ({\n  ...dependency,\n  project_id: projectData.projectId,\n  id: Date.now().toString(36) + Math.random().toString(36).substring(2),\n  created_at: new Date().toISOString()\n}));"
+      },
+      "id": "7q1u9qv6-4s3t-0q9q-5r1s-u6t0s3r7v8u9",
+      "name": "Prepare Dependencies",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "task_dependencies",
+        "columns": "id, project_id, predecessor_task_id, successor_task_id, dependency_type, created_at",
+        "additionalFields": {}
+      },
+      "id": "8r2v0rw7-5t4u-1r0r-6s2t-v7u1t4s8w9v0",
+      "name": "Store Dependencies",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "9s3w1sx8-6u5v-2s1s-7t3u-w8v2u5t9x0w1",
+      "name": "Split Resources",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract resource recommendations from the task breakdown\nconst projectData = $input.item.json;\nconst resourceCategories = projectData.taskBreakdown.resource_categories || [];\n\n// Flatten resources by category\nlet resources = [];\nresourceCategories.forEach(category => {\n  const categoryResources = category.resources.map(resource => ({\n    ...resource,\n    resource_type: category.category,\n    project_id: projectData.projectId,\n    id: Date.now().toString(36) + Math.random().toString(36).substring(2),\n    confidence_score: 0.85, // Default confidence score\n    created_at: new Date().toISOString()\n  }));\n  resources = resources.concat(categoryResources);\n});\n\n// Return the resources for batch processing\nreturn resources;"
+      },
+      "id": "0t4x2ty9-7v6w-3t2t-8u4v-x9w3v6u0y1x2",
+      "name": "Prepare Resources",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "resource_recommendations",
+        "columns": "id, project_id, resource_type, resource_name, description, url, cost_estimate, confidence_score, created_at",
+        "additionalFields": {}
+      },
+      "id": "1u5y3uz0-8w7x-4u3u-9v5w-y0x4w7v1z2y3",
+      "name": "Store Resources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        800
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "operation": "create",
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 2000
+        }
+      },
+      "id": "2v6z4va1-9x8y-5v4v-0w6x-z1y5x8w2a3z4",
+      "name": "Generate Timeline Visualization",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        2650,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "={{\"content\": `You are a project visualization expert. Generate a Mermaid.js Gantt chart visualization for the following project timeline.\n\nProject: ${$json.name}\nMilestones: ${JSON.stringify($json.taskBreakdown.milestones, null, 2)}\nTasks: ${JSON.stringify($json.taskBreakdown.tasks, null, 2)}\nDependencies: ${JSON.stringify($json.taskBreakdown.dependencies, null, 2)}\nCritical Path: ${JSON.stringify($json.taskBreakdown.critical_path, null, 2)}\n\nCreate a Mermaid.js Gantt chart code that visualizes this project timeline. The chart should:\n1. Show all milestones and tasks\n2. Include dependencies\n3. Highlight the critical path items\n4. Use different sections for different milestones\n5. Include estimated completion dates\n\nProvide ONLY the Mermaid.js code without any explanations or markdown formatting.`}"}
+      },
+      "id": "3w7a5wb2-0y9z-6w5w-1x7y-a2z6y9x3b4a5",
+      "name": "Prompt for Timeline Visualization",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        2450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Process the generated Mermaid.js Gantt chart\nconst projectData = $input.item.json;\nconst mermaidCode = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n\n// Clean up the Mermaid code (remove any markdown formatting if present)\nlet cleanMermaidCode = mermaidCode;\nif (mermaidCode.includes('```mermaid')) {\n  cleanMermaidCode = mermaidCode.replace(/```mermaid\\n|```/g, '');\n}\n\n// Update project with timeline visualization\nreturn {\n  ...projectData,\n  timelineVisualization: cleanMermaidCode\n};"
+      },
+      "id": "4x8b6xc3-1z0a-7x6x-2y8z-b3a7z0y4c5b6",
+      "name": "Process Timeline Visualization",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2850,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "projects",
+        "columns": "metadata",
+        "additionalFields": {}
+      },
+      "id": "5y9c7yd4-2a1b-8y7y-3z9a-c4b8a1z5d6c7",
+      "name": "Update Project with Timeline",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        3050,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "6z0d8ze5-3b2c-9z8z-4a0b-d5c9b2a6e7d8",
+      "name": "Split Milestones for Notifications",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        3050,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare milestone notifications\nconst projectData = $input.item.json;\nconst milestones = projectData.taskBreakdown.milestones || [];\n\n// Create notifications for each milestone\nreturn milestones.map(milestone => ({\n  user_id: projectData.userId,\n  project_id: projectData.projectId,\n  title: `Milestone: ${milestone.name}`,\n  message: `Milestone \"${milestone.name}\" is scheduled to be completed by ${milestone.end_date}.`,\n  notification_type: 'milestone_deadline',\n  is_read: false,\n  created_at: new Date().toISOString(),\n  scheduled_for: new Date(milestone.end_date).toISOString(),\n  action_url: `/projects/${projectData.projectId}/milestones/${milestone.id}`,\n  metadata: JSON.stringify({\n    milestone_id: milestone.id,\n    project_name: projectData.name,\n    days_before: 3 // Notify 3 days before deadline\n  })\n}));"
+      },
+      "id": "7a1e9af6-4c3d-0a9a-5b1c-e6d0c3b7f8e9",
+      "name": "Prepare Milestone Notifications",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        3050,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "notifications",
+        "columns": "user_id, project_id, title, message, notification_type, is_read, created_at, scheduled_for, action_url, metadata",
+        "additionalFields": {}
+      },
+      "id": "8b2f0bg7-5d4e-1b0b-6c2d-f7e1d4c8g9f0",
+      "name": "Store Milestone Notifications",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        3250,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "9c3g1ch8-6e5f-2c1c-7d3e-g8f2e5d9h0g1",
+      "name": "Split Critical Tasks for Notifications",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        3050,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare critical task notifications\nconst projectData = $input.item.json;\nconst tasks = projectData.taskBreakdown.tasks || [];\nconst criticalPath = projectData.taskBreakdown.critical_path || [];\n\n// Filter tasks on the critical path\nconst criticalTasks = tasks.filter(task => criticalPath.includes(task.id));\n\n// Create notifications for each critical task\nreturn criticalTasks.map(task => {\n  // Find the milestone for this task\n  const milestone = projectData.taskBreakdown.milestones.find(m => m.id === task.milestone_id);\n  \n  // Calculate task due date (simplified - in reality would be more complex)\n  const dueDate = milestone ? milestone.end_date : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];\n  \n  return {\n    user_id: projectData.userId,\n    project_id: projectData.projectId,\n    title: `Critical Task: ${task.name}`,\n    message: `Critical path task \"${task.name}\" needs attention. Any delay will affect the project timeline.`,\n    notification_type: 'critical_task',\n    is_read: false,\n    created_at: new Date().toISOString(),\n    scheduled_for: new Date(dueDate).toISOString(),\n    action_url: `/projects/${projectData.projectId}/tasks/${task.id}`,\n    metadata: JSON.stringify({\n      task_id: task.id,\n      project_name: projectData.name,\n      priority: 'high',\n      days_before: 2 // Notify 2 days before deadline\n    })\n  };\n});"
+      },
+      "id": "0d4h2di9-7f6g-3d2d-8e4f-h9g3f6e0i1h2",
+      "name": "Prepare Critical Task Notifications",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        3050,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "notifications",
+        "columns": "user_id, project_id, title, message, notification_type, is_read, created_at, scheduled_for, action_url, metadata",
+        "additionalFields": {}
+      },
+      "id": "1e5i3ej0-8g7h-4e3e-9f5g-i0h9g1f0j1i2",
+      "name": "Store Critical Task Notifications",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        3250,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare the final response\nconst projectData = $input.item.json;\n\n// Create a summary of what was created\nconst summary = {\n  projectId: projectData.projectId,\n  name: projectData.name,\n  milestones: projectData.taskBreakdown.milestones.length,\n  tasks: projectData.taskBreakdown.tasks.length,\n  dependencies: projectData.taskBreakdown.dependencies.length,\n  criticalPath: projectData.taskBreakdown.critical_path,\n  estimatedDuration: projectData.taskBreakdown.estimated_duration_days,\n  resourceRecommendations: projectData.taskBreakdown.resource_categories.reduce((total, category) => total + category.resources.length, 0),\n  timelineVisualization: true,\n  notificationsCreated: true\n};\n\nreturn {\n  status: 'success',\n  message: 'Project workflow initialized successfully',\n  data: summary\n};"
+      },
+      "id": "2f6j4fk1-9h8i-5f4f-0g6h-j1i0h2g1k2j3",
+      "name": "Prepare Final Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        3450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "3g7k5gl2-0i9j-6g5g-1h7i-k2j1i3h2l3k4",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        3650,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "workflow/project/:projectId",
+        "options": {}
+      },
+      "id": "4h8l6hm3-1j0k-7h6h-2i8j-l3k2j4i3m4l5",
+      "name": "Get Project Workflow",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "projects",
+        "columns": "*",
+        "additionalFields": {}
+      },
+      "id": "5i9m7in4-2k1l-8i7i-3j9k-m4l3k5j4n5m6",
+      "name": "Fetch Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        450,
+        900
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "milestones",
+        "columns": "*",
+        "additionalFields": {}
+      },
+      "id": "6j0n8jo5-3l2m-9j8j-4k0l-n5m4l6k5o6n7",
+      "name": "Fetch Project Milestones",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        650,
+        800
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "tasks",
+        "columns": "*",
+        "additionalFields": {}
+      },
+      "id": "7k1o9kp6-4m3n-0k9k-5l1m-o6n5m7l6p7o8",
+      "name": "Fetch Project Tasks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        650,
+        900
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "task_dependencies",
+        "columns": "*",
+        "additionalFields": {}
+      },
+      "id": "8l2p0lq7-5n4o-1l0l-6m2n-p7o6n8m7q8p9",
+      "name": "Fetch Task Dependencies",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        650,
+        1000
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "resource_recommendations",
+        "columns": "*",
+        "additionalFields": {}
+      },
+      "id": "9m3q1mr8-6o5p-2m1m-7n3o-q8p7o9n8r9q0",
+      "name": "Fetch Resource Recommendations",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        650,
+        1100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Combine all project data\nconst project = $node[\"Fetch Project\"].json[0];\nconst milestones = $node[\"Fetch Project Milestones\"].json;\nconst tasks = $node[\"Fetch Project Tasks\"].json;\nconst dependencies = $node[\"Fetch Task Dependencies\"].json;\nconst resources = $node[\"Fetch Resource Recommendations\"].json;\n\n// Group resources by type\nconst resourceCategories = [];\nconst resourceTypes = [...new Set(resources.map(r => r.resource_type))];\n\nresourceTypes.forEach(type => {\n  const typeResources = resources.filter(r => r.resource_type === type);\n  resourceCategories.push({\n    category: type,\n    resources: typeResources.map(r => ({\n      name: r.resource_name,\n      description: r.description,\n      cost_estimate: r.cost_estimate,\n      url: r.url\n    }))\n  });\n});\n\n// Extract timeline visualization from metadata\nlet timelineVisualization = null;\nif (project.metadata && project.metadata.timelineVisualization) {\n  timelineVisualization = project.metadata.timelineVisualization;\n}\n\n// Prepare the complete project workflow data\nreturn {\n  project: {\n    id: project.id,\n    name: project.name,\n    description: project.description,\n    status: project.status,\n    created_at: project.created_at,\n    updated_at: project.updated_at\n  },\n  milestones,\n  tasks,\n  dependencies,\n  resource_categories: resourceCategories,\n  timeline_visualization: timelineVisualization\n};"
+      },
+      "id": "0n4r2ns9-7p6q-3n2n-8o4p-r9q8p0o9s0r1",
+      "name": "Combine Project Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        850,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "1o5s3ot0-8q7r-4o3o-9p5q-s0r9q1p0t1s2",
+      "name": "Send Project Data Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "workflow/notification/schedule",
+        "options": {}
+      },
+      "id": "2p6t4pu1-9r8s-5p4p-0q6r-t1s0r2q1u2t3",
+      "name": "Schedule Notifications",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "notifications",
+        "columns": "*",
+        "additionalFields": {}
+      },
+      "id": "3q7u5qv2-0s9t-6q5q-1r7s-u2t1s3r2v3u4",
+      "name": "Fetch Due Notifications",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        450,
+        1300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "4r8v6rw3-1t0u-7r6r-2s8t-v3u2t4s3w4v5",
+      "name": "Split Notifications",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        650,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.webhook_url || \"https://example.com/notification-webhook\"}}",
+        "authentication": "none",
+        "options": {}
+      },
+      "id": "5s9w7sx4-2u1v-8s7s-3t9u-w4v3u5t4x5w6",
+      "name": "Send Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        850,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "notifications",
+        "columns": "is_read",
+        "additionalFields": {}
+      },
+      "id": "6t0x8ty5-3v2w-9t8t-4u0v-x5w4v6u5y6x7",
+      "name": "Mark Notification as Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        1300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare the final response\nconst notificationCount = $input.all.length;\n\nreturn {\n  status: 'success',\n  message: `${notificationCount} notifications processed`,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "7u1y9uz6-4w3x-0u9u-5v1w-y6x5w7v6z7y8",
+      "name": "Prepare Notification Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "8v2z0va7-5x4y-1v0v-6w2x-z7y6x8w7a8z9",
+      "name": "Send Notification Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "=An error occurred: {{$error.message}}",
+        "errorDescription": "=Stack: {{$error.stack}}"
+      },
+      "id": "9w3a1wb8-6y5z-2w1w-7x3y-a8z7y9x8b9a0",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        250,
+        1500
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log the error\nconsole.error('Error in workflow automation workflow:', $input.item.json.errorMessage);\n\n// Return a formatted error response\nreturn {\n  status: 'error',\n  message: $input.item.json.errorMessage,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "0x4b2xc9-7z6a-3x2x-8y4z-b9a8z0y9c0b1",
+      "name": "Format Error Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        450,
+        1500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "responseCode": 500,
+        "options": {}
+      },
+      "id": "1y5c3yd0-8a7b-4y3y-9z5a-c0b9a1z0d1c2",
+      "name": "Send Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        650,
+        1500
+      ]
+    }
+  ],
+  "connections": {
+    "Initialize Project Workflow": {
+      "main": [
+        [
+          {
+            "node": "Prepare Project Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Project Data": {
+      "main": [
+        [
+          {
+            "node": "Store Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Project": {
+      "main": [
+        [
+          {
+            "node": "Has Spec ID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Spec ID?": {
+      "true": [
+        [
+          {
+            "node": "Fetch Specification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Prepare Specification Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Specification": {
+      "main": [
+        [
+          {
+            "node": "Prepare Specification Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Specification Data": {
+      "main": [
+        [
+          {
+            "node": "Prompt for Task Breakdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt for Task Breakdown": {
+      "main": [
+        [
+          {
+            "node": "Generate Task Breakdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Task Breakdown": {
+      "main": [
+        [
+          {
+            "node": "Process Task Breakdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Task Breakdown": {
+      "main": [
+        [
+          {
+            "node": "Prepare Milestones",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Tasks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Dependencies",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Resources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prompt for Timeline Visualization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Milestones": {
+      "main": [
+        [
+          {
+            "node": "Split Milestones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Milestones": {
+      "main": [
+        [
+          {
+            "node": "Store Milestones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Tasks": {
+      "main": [
+        [
+          {
+            "node": "Split Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Tasks": {
+      "main": [
+        [
+          {
+            "node": "Store Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Dependencies": {
+      "main": [
+        [
+          {
+            "node": "Split Dependencies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Dependencies": {
+      "main": [
+        [
+          {
+            "node": "Store Dependencies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Resources": {
+      "main": [
+        [
+          {
+            "node": "Split Resources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Resources": {
+      "main": [
+        [
+          {
+            "node": "Store Resources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt for Timeline Visualization": {
+      "main": [
+        [
+          {
+            "node": "Generate Timeline Visualization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Timeline Visualization": {
+      "main": [
+        [
+          {
+            "node": "Process Timeline Visualization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Timeline Visualization": {
+      "main": [
+        [
+          {
+            "node": "Update Project with Timeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Project with Timeline": {
+      "main": [
+        [
+          {
+            "node": "Prepare Milestone Notifications",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Critical Task Notifications",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Milestone Notifications": {
+      "main": [
+        [
+          {
+            "node": "Split Milestones for Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Milestones for Notifications": {
+      "main": [
+        [
+          {
+            "node": "Store Milestone Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Critical Task Notifications": {
+      "main": [
+        [
+          {
+            "node": "Split Critical Tasks for Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Critical Tasks for Notifications": {
+      "main": [
+        [
+          {
+            "node": "Store Critical Task Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Final Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Workflow": {
+      "main": [
+        [
+          {
+            "node": "Fetch Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Project": {
+      "main": [
+        [
+          {
+            "node": "Fetch Project Milestones",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Project Tasks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Task Dependencies",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Resource Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Project Milestones": {
+      "main": [
+        [
+          {
+            "node": "Combine Project Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Project Tasks": {
+      "main": [
+        [
+          {
+            "node": "Combine Project Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Task Dependencies": {
+      "main": [
+        [
+          {
+            "node": "Combine Project Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Resource Recommendations": {
+      "main": [
+        [
+          {
+            "node": "Combine Project Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Project Data": {
+      "main": [
+        [
+          {
+            "node": "Send Project Data Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Notifications": {
+      "main": [
+        [
+          {
+            "node": "Fetch Due Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Due Notifications": {
+      "main": [
+        [
+          {
+            "node": "Split Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Notifications": {
+      "main": [
+        [
+          {
+            "node": "Send Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification": {
+      "main": [
+        [
+          {
+            "node": "Mark Notification as Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Notification as Sent": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Notification Response": {
+      "main": [
+        [
+          {
+            "node": "Send Notification Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Format Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Response": {
+      "main": [
+        [
+          {
+            "node": "Send Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Milestones": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Tasks": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Dependencies": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Resources": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Milestone Notifications": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Critical Task Notifications": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "Error Handler"
+  },
+  "tags": [
+    {
+      "name": "AI Assistant",
+      "color": "#ff9050"
+    }
+  ],
+  "pinData": {},
+  "versionId": "1c5i3ej0-8g7h-4e3e-9f5g-i0h9g1f0j1i2",
+  "triggerCount": 3,
+  "staticData": null,
+  "meta": {
+    "instanceId": "1a2b3c4d5e6f7g8h9i0j"
+  }
+}

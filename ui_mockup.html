@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Specification Assistant</title>
+    <style>
+        /* CSS Variables for consistent theming */
+        :root {
+            --primary-color: #4361ee;
+            --primary-light: #4895ef;
+            --secondary-color: #3f37c9;
+            --accent-color: #4cc9f0;
+            --success-color: #4ade80;
+            --warning-color: #fbbf24;
+            --danger-color: #f87171;
+            --text-color: #1f2937;
+            --text-light: #6b7280;
+            --bg-color: #f9fafb;
+            --card-bg: #ffffff;
+            --border-color: #e5e7eb;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            --radius-sm: 0.25rem;
+            --radius-md: 0.375rem;
+            --radius-lg: 0.5rem;
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace;
+        }
+
+        /* Base styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.5;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Layout */
+        .app-container {
+            display: flex;
+            flex: 1;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 280px;
+            background-color: var(--card-bg);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.3s ease;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Header */
+        .app-header {
+            background-color: var(--card-bg);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 64px;
+        }
+
+        .app-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-weight: 600;
+            font-size: 1.25rem;
+            color: var(--primary-color);
+        }
+
+        .app-logo svg {
+            width: 32px;
+            height: 32px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        /* Sidebar */
+        .sidebar-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+        }
+
+        .project-info {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .project-name {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .project-meta {
+            font-size: 0.875rem;
+            color: var(--text-light);
+        }
+
+        .sidebar-nav {
+            padding: 1rem;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-bottom: 0.5rem;
+            color: var(--text-color);
+            text-decoration: none;
+        }
+
+        .nav-item:hover, .nav-item.active {
+            background-color: rgba(67, 97, 238, 0.1);
+            color: var(--primary-color);
+        }
+
+        .nav-item svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        /* Main content areas */
+        .content-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .view {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+            overflow: auto;
+            padding: 1.5rem;
+        }
+
+        .view.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        /* Initial Form */
+        .initial-form {
+            max-width: 800px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .form-card {
+            background-color: var(--card-bg);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            padding: 2rem;
+        }
+
+        .form-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            color: var(--primary-color);
+        }
+
+        .form-description {
+            margin-bottom: 1.5rem;
+            color: var(--text-light);
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        .form-input, .form-textarea, .form-select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            font-family: var(--font-sans);
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        .form-input:focus, .form-textarea:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--primary-light);
+            box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
+        }
+
+        .form-textarea {
+            min-height: 200px;
+            resize: vertical;
+        }
+
+        .form-hint {
+            margin-top: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-light);
+        }
+
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 1rem;
+        }
+
+        /* Chat Interface */
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            max-width: 1000px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem 0;
+        }
+
+        .message {
+            display: flex;
+            margin-bottom: 1.5rem;
+        }
+
+        .message-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            margin-right: 1rem;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            color: white;
+        }
+
+        .message-avatar.user {
+            background-color: var(--secondary-color);
+        }
+
+        .message-avatar.assistant {
+            background-color: var(--primary-color);
+        }
+
+        .message-content {
+            flex: 1;
+            background-color: var(--card-bg);
+            padding: 1rem;
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            position: relative;
+        }
+
+        .message-content::before {
+            content: '';
+            position: absolute;
+            top: 16px;
+            left: -8px;
+            width: 0;
+            height: 0;
+            border-top: 8px solid transparent;
+            border-bottom: 8px solid transparent;
+            border-right: 8px solid var(--card-bg);
+        }
+
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+
+        .message-sender {
+            font-weight: 600;
+        }
+
+        .message-time {
+            font-size: 0.75rem;
+            color: var(--text-light);
+        }
+
+        .message-text {
+            white-space: pre-wrap;
+        }
+
+        .message-text p {
+            margin-bottom: 0.75rem;
+        }
+
+        .message-text p:last-child {
+            margin-bottom: 0;
+        }
+
+        .chat-input-container {
+            padding: 1rem 0;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .chat-input-form {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            font-family: var(--font-sans);
+            font-size: 1rem;
+            resize: none;
+            min-height: 56px;
+            max-height: 200px;
+            transition: border-color 0.2s;
+        }
+
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--primary-light);
+            box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
+        }
+
+        /* Specification View */
+        .spec-container {
+            max-width: 1000px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .spec-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .spec-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+
+        .spec-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .spec-card {
+            background-color: var(--card-bg);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .spec-section {
+            margin-bottom: 2rem;
+        }
+
+        .spec-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .spec-section-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .spec-list {
+            list-style-position: inside;
+            margin-left: 1rem;
+        }
+
+        .spec-list li {
+            margin-bottom: 0.5rem;
+        }
+
+        .spec-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .spec-table th, .spec-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .spec-table th {
+            font-weight: 600;
+            background-color: rgba(67, 97, 238, 0.05);
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.625rem 1.25rem;
+            font-weight: 500;
+            font-size: 1rem;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            gap: 0.5rem;
+        }
+
+        .btn:focus {
+            outline: none;
+        }
+
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--secondary-color);
+        }
+
+        .btn-secondary {
+            background-color: transparent;
+            color: var(--primary-color);
+            border: 1px solid var(--primary-color);
+        }
+
+        .btn-secondary:hover {
+            background-color: rgba(67, 97, 238, 0.05);
+        }
+
+        .btn-icon {
+            padding: 0.625rem;
+            border-radius: 50%;
+        }
+
+        .btn svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        /* Loading indicator */
+        .loading-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-light);
+            font-size: 0.875rem;
+        }
+
+        .loading-spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(67, 97, 238, 0.1);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Badges */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            border-radius: var(--radius-sm);
+        }
+
+        .badge-primary {
+            background-color: rgba(67, 97, 238, 0.1);
+            color: var(--primary-color);
+        }
+
+        .badge-success {
+            background-color: rgba(74, 222, 128, 0.1);
+            color: var(--success-color);
+        }
+
+        .badge-warning {
+            background-color: rgba(251, 191, 36, 0.1);
+            color: var(--warning-color);
+        }
+
+        /* Responsive styles */
+        @media (max-width: 768px) {
+            .app-container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: auto;
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+                transform: translateY(-100%);
+                position: absolute;
+                z-index: 10;
+            }
+
+            .sidebar.open {
+                transform: translateY(0);
+            }
+
+            .mobile-menu-toggle {
+                display: block;
+            }
+
+            .form-card, .spec-card {
+                padding: 1.5rem;
+            }
+
+            .form-actions {
+                flex-direction: column;
+            }
+
+            .form-actions .btn {
+                width: 100%;
+            }
+        }
+
+        @media (min-width: 769px) {
+            .mobile-menu-toggle {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                Project Specification
+            </div>
+            <div class="project-info">
+                <div class="project-name" id="sidebar-project-name">New Project</div>
+                <div class="project-meta">
+                    <div>Created: <span id="sidebar-created-date">-</span></div>
+                    <div>Status: <span id="sidebar-status">Not started</span></div>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-view="initial-view">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    Project Description
+                </a>
+                <a href="#" class="nav-item" data-view="chat-view">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                    </svg>
+                    Conversation
+                </a>
+                <a href="#" class="nav-item" data-view="spec-view">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Specification
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="app-header">
+                <div class="app-logo">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                    </svg>
+                    AI Specification Assistant
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-icon mobile-menu-toggle" id="mobile-menu-toggle">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Content Area -->
+            <div class="content-area">
+                <!-- Initial Project Description View -->
+                <div class="view active" id="initial-view">
+                    <div class="initial-form">
+                        <div class="form-card">
+                            <h2 class="form-title">Start Your Project Specification</h2>
+                            <p class="form-description">
+                                Describe your software project idea, and our AI assistant will help you develop a detailed specification through a conversational process.
+                            </p>
+                            <form id="project-form">
+                                <div class="form-group">
+                                    <label for="project-name" class="form-label">Project Name</label>
+                                    <input type="text" id="project-name" class="form-input" placeholder="e.g., Task Management App">
+                                </div>
+                                <div class="form-group">
+                                    <label for="project-description" class="form-label">Project Description</label>
+                                    <textarea id="project-description" class="form-textarea" placeholder="Describe your project idea in as much detail as you can. Don't worry if you're missing details - our AI will help clarify through conversation."></textarea>
+                                    <div class="form-hint">
+                                        Try to include information about the purpose, target users, key features, and any specific requirements or constraints.
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="user-skill-level" class="form-label">Your Technical Skill Level</label>
+                                    <select id="user-skill-level" class="form-select">
+                                        <option value="beginner">Beginner - I'm new to software development</option>
+                                        <option value="intermediate" selected>Intermediate - I have some experience</option>
+                                        <option value="expert">Expert - I'm an experienced developer</option>
+                                    </select>
+                                </div>
+                                <div class="form-actions">
+                                    <button type="button" class="btn btn-secondary">Clear Form</button>
+                                    <button type="submit" class="btn btn-primary">Start Specification</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat View -->
+                <div class="view" id="chat-view">
+                    <div class="chat-container">
+                        <div class="chat-messages" id="chat-messages">
+                            <!-- Messages will be added here dynamically -->
+                        </div>
+                        <div class="chat-input-container">
+                            <form id="chat-form" class="chat-input-form">
+                                <textarea id="chat-input" class="chat-input" placeholder="Type your message here..." rows="1"></textarea>
+                                <button type="submit" class="btn btn-primary btn-icon">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                    </svg>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Specification View -->
+                <div class="view" id="spec-view">
+                    <div class="spec-container">
+                        <div class="spec-header">
+                            <h2 class="spec-title">Project Specification: <span id="spec-project-name">-</span></h2>
+                            <div class="spec-actions">
+                                <button class="btn btn-secondary">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                    </svg>
+                                    Export
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="spec-card">
+                            <div class="spec-section">
+                                <h3 class="spec-section-title">Executive Summary</h3>
+                                <p id="spec-summary">
+                                    The specification will appear here once it's generated through the conversation.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="spec-card">
+                            <div class="spec-section">
+                                <h3 class="spec-section-title">Functional Requirements</h3>
+                                <ul class="spec-list" id="spec-functional-requirements">
+                                    <!-- Requirements will be added here -->
+                                </ul>
+                            </div>
+
+                            <div class="spec-section">
+                                <h3 class="spec-section-title">Non-Functional Requirements</h3>
+                                <ul class="spec-list" id="spec-non-functional-requirements">
+                                    <!-- Requirements will be added here -->
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="spec-card">
+                            <div class="spec-section">
+                                <h3 class="spec-section-title">Recommended Technology Stack</h3>
+                                <div id="spec-tech-stack">
+                                    <!-- Tech stack will be added here -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="spec-card">
+                            <div class="spec-section">
+                                <h3 class="spec-section-title">Project Milestones</h3>
+                                <table class="spec-table" id="spec-milestones">
+                                    <thead>
+                                        <tr>
+                                            <th>Milestone</th>
+                                            <th>Duration</th>
+                                            <th>Dependencies</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Milestones will be added here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // DOM Elements
+            const sidebar = document.getElementById('sidebar');
+            const mobileMenuToggle = document.getElementById('mobile-menu-toggle');
+            const navItems = document.querySelectorAll('.nav-item');
+            const views = document.querySelectorAll('.view');
+            const projectForm = document.getElementById('project-form');
+            const chatForm = document.getElementById('chat-form');
+            const chatInput = document.getElementById('chat-input');
+            const chatMessages = document.getElementById('chat-messages');
+            
+            // Sample conversation data (would come from API in real implementation)
+            let conversationId = null;
+            let conversationStage = 'collecting';
+            let isAwaitingUser = false;
+            let isSpecReady = false;
+            
+            // Mobile menu toggle
+            if (mobileMenuToggle) {
+                mobileMenuToggle.addEventListener('click', function() {
+                    sidebar.classList.toggle('open');
+                });
+            }
+            
+            // Navigation between views
+            navItems.forEach(item => {
+                item.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    
+                    // Get the target view
+                    const targetView = this.getAttribute('data-view');
+                    
+                    // Update active nav item
+                    navItems.forEach(navItem => {
+                        navItem.classList.remove('active');
+                    });
+                    this.classList.add('active');
+                    
+                    // Show the target view
+                    views.forEach(view => {
+                        view.classList.remove('active');
+                        if (view.id === targetView) {
+                            view.classList.add('active');
+                        }
+                    });
+                    
+                    // Close mobile menu if open
+                    sidebar.classList.remove('open');
+                });
+            });
+            
+            // Auto-resize textarea
+            if (chatInput) {
+                chatInput.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    this.style.height = (this.scrollHeight) + 'px';
+                });
+            }
+            
+            // Project form submission
+            if (projectForm) {
+                projectForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    
+                    const projectName = document.getElementById('project-name').value;
+                    const projectDescription = document.getElementById('project-description').value;
+                    const userSkillLevel = document.getElementById('user-skill-level').value;
+                    
+                    if (!projectDescription.trim()) {
+                        alert('Please provide a project description');
+                        return;
+                    }
+                    
+                    // Update sidebar project name
+                    document.getElementById('sidebar-project-name').textContent = projectName || 'New Project';
+                    document.getElementById('sidebar-created-date').textContent = new Date().toLocaleDateString();
+                    document.getElementById('sidebar-status').textContent = 'In Progress';
+                    
+                    // In a real implementation, this would call the API to start a conversation
+                    startConversation(projectName, projectDescription, userSkillLevel);
+                    
+                    // Navigate to chat view
+                    document.querySelector('.nav-item[data-view="chat-view"]').click();
+                });
+            }
+            
+            // Chat form submission
+            if (chatForm) {
+                chatForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    
+                    const message = chatInput.value.trim();
+                    if (!message || !isAwaitingUser) return;
+                    
+                    // Add user message to chat
+                    addMessage('user', message);
+                    
+                    // Clear input
+                    chatInput.value = '';
+                    chatInput.style.height = 'auto';
+                    
+                    // In a real implementation, this would call the API to send the message
+                    sendMessage(message);
+                });
+            }
+            
+            // Simulate starting a conversation with the API
+            function startConversation(projectName, projectDescription, userSkillLevel) {
+                // Clear existing messages
+                chatMessages.innerHTML = '';
+                
+                // Add loading message
+                const loadingMessage = document.createElement('div');
+                loadingMessage.className = 'loading-indicator';
+                loadingMessage.innerHTML = '<div class="loading-spinner"></div> Analyzing your project description...';
+                chatMessages.appendChild(loadingMessage);
+                
+                // Simulate API call delay
+                setTimeout(function() {
+                    // Remove loading message
+                    chatMessages.removeChild(loadingMessage);
+                    
+                    // Set conversation state
+                    conversationId = 'conv_' + Math.random().toString(36).substr(2, 9);
+                    conversationStage = 'clarifying';
+                    isAwaitingUser = true;
+                    
+                    // Add assistant message
+                    const initialResponse = "Thanks for providing your project description! I'll help you develop a detailed specification. Let me ask a few clarifying questions:\n\nWhat specific user roles do you envision for this system? For example, regular users, administrators, etc.";
+                    addMessage('assistant', initialResponse);
+                }, 2000);
+            }
+            
+            // Simulate sending a message to the API
+            function sendMessage(message) {
+                // Set state to waiting for assistant
+                isAwaitingUser = false;
+                
+                // Add loading indicator
+                const loadingMessage = document.createElement('div');
+                loadingMessage.className = 'loading-indicator';
+                loadingMessage.innerHTML = '<div class="loading-spinner"></div> Assistant is typing...';
+                chatMessages.appendChild(loadingMessage);
+                
+                // Simulate API call delay
+                setTimeout(function() {
+                    // Remove loading message
+                    chatMessages.removeChild(loadingMessage);
+                    
+                    // Simulate different responses based on conversation stage
+                    let response = '';
+                    
+                    if (conversationStage === 'clarifying') {
+                        // Simulate clarifying questions
+                        const clarifyingResponses = [
+                            "Thank you for that information. What kind of authentication system would you prefer? Options include email/password, social login (Google, Facebook), or single sign-on (SSO).",
+                            "Got it. What about data storage requirements? Will users be uploading files or images? If so, what are the size limits and types of files you want to support?",
+                            "That's helpful. Regarding scalability, approximately how many concurrent users do you expect the system to handle initially, and how might that grow over time?",
+                            "Thanks for all these details! I have enough information now to generate a comprehensive specification for your project."
+                        ];
+                        
+                        // Pick a response based on message count
+                        const messageCount = document.querySelectorAll('.message').length / 2; // Divide by 2 for pairs of user/assistant messages
+                        
+                        if (messageCount >= 4) {
+                            // Last clarifying question, next will be spec generation
+                            response = clarifyingResponses[3];
+                            conversationStage = 'generating';
+                            isAwaitingUser = false;
+                            
+                            // Simulate spec generation after a delay
+                            setTimeout(generateSpecification, 3000);
+                        } else {
+                            // More clarifying questions
+                            response = clarifyingResponses[messageCount - 1];
+                            isAwaitingUser = true;
+                        }
+                    }
+                    
+                    // Add assistant message
+                    addMessage('assistant', response);
+                    
+                    // Scroll to bottom of chat
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }, 1500);
+            }
+            
+            // Simulate generating the specification
+            function generateSpecification() {
+                // Add generation message
+                addMessage('assistant', "I'm now generating your complete project specification based on our conversation. This will take just a moment...");
+                
+                // Simulate processing delay
+                setTimeout(function() {
+                    // Set state to specification ready
+                    conversationStage = 'completed';
+                    isSpecReady = true;
+                    
+                    // Add completion message
+                    addMessage('assistant', "Your project specification is now complete! You can view the full details in the Specification tab. If you have any questions or would like to make adjustments, feel free to ask.");
+                    
+                    // Update sidebar status
+                    document.getElementById('sidebar-status').textContent = 'Completed';
+                    
+                    // Populate specification view with sample data
+                    populateSampleSpecification();
+                    
+                    // Enable specification tab
+                    document.querySelector('.nav-item[data-view="spec-view"]').classList.remove('disabled');
+                }, 4000);
+            }
+            
+            // Add a message to the chat
+            function addMessage(sender, text) {
+                const messageEl = document.createElement('div');
+                messageEl.className = 'message';
+                
+                const now = new Date();
+                const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                
+                let avatarText = sender === 'user' ? 'U' : 'AI';
+                
+                messageEl.innerHTML = `
+                    <div class="message-avatar ${sender}">${avatarText}</div>
+                    <div class="message-content">
+                        <div class="message-header">
+                            <span class="message-sender">${sender === 'user' ? 'You' : 'AI Assistant'}</span>
+                            <span class="message-time">${timeString}</span>
+                        </div>
+                        <div class="message-text">${formatMessageText(text)}</div>
+                    </div>
+                `;
+                
+                chatMessages.appendChild(messageEl);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+            
+            // Format message text with paragraphs
+            function formatMessageText(text) {
+                return text.split('\n\n').map(paragraph => `<p>${paragraph.replace(/\n/g, '<br>')}</p>`).join('');
+            }
+            
+            // Populate specification view with sample data
+            function populateSampleSpecification() {
+                // Get project name from form
+                const projectName = document.getElementById('project-name').value || 'New Project';
+                
+                // Update spec view project name
+                document.getElementById('spec-project-name').textContent = projectName;
+                
+                // Sample specification data
+                const sampleSpec = {
+                    summary: "This project is a web-based task management application designed to help individuals and teams organize, track, and collaborate on tasks and projects. The system will provide a user-friendly interface for creating, assigning, and monitoring tasks with deadlines, priorities, and categories.",
+                    functionalRequirements: [
+                        "User Authentication – OAuth 2.0 with Google, GitHub, and email/password options",
+                        "Task Management – Create, edit, delete, and view tasks with title, description, due date, priority, and status",
+                        "Project Organization – Group tasks into projects with team member assignments",
+                        "Notifications – Email and in-app alerts for approaching deadlines and task assignments",
+                        "Dashboard – Visual overview of task status, upcoming deadlines, and project progress",
+                        "Search & Filtering – Find tasks by keyword, status, assignee, or date range",
+                        "File Attachments – Upload and link documents to tasks (max 10MB per file)",
+                        "Comments & Activity – Discussion thread on tasks with activity history"
+                    ],
+                    nonFunctionalRequirements: [
+                        "Performance – Page load time under 2 seconds, task operations under 1 second",
+                        "Scalability – Support for up to 10,000 concurrent users and 1M total tasks",
+                        "Security – Data encryption at rest and in transit, GDPR compliance",
+                        "Availability – 99.9% uptime with scheduled maintenance windows",
+                        "Accessibility – WCAG 2.1 AA compliance for all core features",
+                        "Mobile Responsiveness – Full functionality on devices with 320px+ width",
+                        "Browser Compatibility – Support for latest versions of Chrome, Firefox, Safari, and Edge"
+                    ],
+                    techStack: {
+                        frontend: "React 18 with TypeScript and Tailwind CSS",
+                        backend: "Node.js with Express.js API framework",
+                        database: "PostgreSQL for relational data with Redis for caching",
+                        storage: "AWS S3 for file attachments",
+                        authentication: "Auth0 for identity management",
+                        hosting: "AWS ECS with auto-scaling configuration",
+                        ci_cd: "GitHub Actions for continuous integration and deployment"
+                    },
+                    milestones: [
+                        { name: "User Authentication & Profile Management", duration: "2 weeks", dependencies: "—" },
+                        { name: "Core Task Management Features", duration: "3 weeks", dependencies: "1" },
+                        { name: "Project Organization & Team Features", duration: "2 weeks", dependencies: "2" },
+                        { name: "Notification System", duration: "1 week", dependencies: "1, 2" },
+                        { name: "Dashboard & Reporting", duration: "2 weeks", dependencies: "2, 3" },
+                        { name: "Search & Advanced Filtering", duration: "1 week", dependencies: "2" },
+                        { name: "File Attachment System", duration: "1 week", dependencies: "2" },
+                        { name: "Testing & Quality Assurance", duration: "2 weeks", dependencies: "1-7" },
+                        { name: "Deployment & Launch", duration: "1 week", dependencies: "8" }
+                    ]
+                };
+                
+                // Populate summary
+                document.getElementById('spec-summary').textContent = sampleSpec.summary;
+                
+                // Populate functional requirements
+                const functionalReqsList = document.getElementById('spec-functional-requirements');
+                functionalReqsList.innerHTML = '';
+                sampleSpec.functionalRequirements.forEach(req => {
+                    const li = document.createElement('li');
+                    li.textContent = req;
+                    functionalReqsList.appendChild(li);
+                });
+                
+                // Populate non-functional requirements
+                const nonFunctionalReqsList = document.getElementById('spec-non-functional-requirements');
+                nonFunctionalReqsList.innerHTML = '';
+                sampleSpec.nonFunctionalRequirements.forEach(req => {
+                    const li = document.createElement('li');
+                    li.textContent = req;
+                    nonFunctionalReqsList.appendChild(li);
+                });
+                
+                // Populate tech stack
+                const techStackEl = document.getElementById('spec-tech-stack');
+                techStackEl.innerHTML = '';
+                Object.entries(sampleSpec.techStack).forEach(([key, value]) => {
+                    const div = document.createElement('div');
+                    div.innerHTML = `<strong>${key.replace('_', ' ').toUpperCase()}:</strong> ${value}`;
+                    div.style.marginBottom = '0.5rem';
+                    techStackEl.appendChild(div);
+                });
+                
+                // Populate milestones
+                const milestonesTableBody = document.querySelector('#spec-milestones tbody');
+                milestonesTableBody.innerHTML = '';
+                sampleSpec.milestones.forEach((milestone, index) => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${index + 1}. ${milestone.name}</td>
+                        <td>${milestone.duration}</td>
+                        <td>${milestone.dependencies}</td>
+                    `;
+                    milestonesTableBody.appendChild(row);
+                });
+            }
+        });
+    </script>
+</body>
+</html>

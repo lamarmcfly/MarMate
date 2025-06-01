@@ -1,0 +1,813 @@
+{
+  "name": "Optimized Conversation Manager (Spec Gen & Analysis)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "conversation/start",
+        "options": {}
+      },
+      "id": "webhook-start-conversation",
+      "name": "Webhook: Start Conversation",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "conversation/{{$parameter.pathConversationId}}/message",
+        "options": {}
+      },
+      "id": "webhook-process-message",
+      "name": "Webhook: Process Message",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        400
+      ],
+      "parametersUi": {
+        "pathConversationId": {
+          "name": "Path: conversationId",
+          "type": "string",
+          "default": "",
+          "description": "The ID of the conversation from the path"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "conversation/{{$parameter.pathConversationId}}/generate_spec",
+        "options": {}
+      },
+      "id": "webhook-generate-spec",
+      "name": "Webhook: Generate Specification",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        600
+      ],
+      "parametersUi": {
+        "pathConversationId": {
+          "name": "Path: conversationId",
+          "type": "string",
+          "default": "",
+          "description": "The ID of the conversation from the path"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const body = $input.item.json.body || {};\nconst headers = $input.item.json.headers || {};\nconst query = $input.item.json.query || {};\nconst pathParams = $input.item.json.params || {}; // For conversationId from path\n\nlet conversationId = pathParams.conversationId || body.conversationId || ($input.item.json.workflowTrigger === 'webhook-start-conversation' ? Date.now().toString(36) + Math.random().toString(36).substring(2) : null);\nlet userId = headers['x-user-id'] || body.userId || 'anonymous_user'; // Prefer header for user ID\nlet projectId = body.projectId || query.projectId; // Project ID might be passed\nlet initialPrompt = body.initialPrompt || '';\nlet currentUserMessage = body.message || '';\nlet userSkillLevel = body.userSkillLevel || 'intermediate';\nlet projectName = body.projectName || 'Untitled Project';\nlet requestType = '';\n\nif ($input.item.json.workflowTrigger === 'webhook-start-conversation') {\n  requestType = 'start_conversation';\n  if (!initialPrompt) throw new Error('initialPrompt is required to start a conversation.');\n  currentUserMessage = initialPrompt; // For new conversations, the initial prompt is the first message\n} else if ($input.item.json.workflowTrigger === 'webhook-process-message') {\n  requestType = 'process_message';\n  if (!currentUserMessage) throw new Error('message is required to process.');\n} else if ($input.item.json.workflowTrigger === 'webhook-generate-spec') {\n  requestType = 'generate_specification';\n  // No new message, just a request to generate spec\n}\n\nif (!conversationId && requestType !== 'start_conversation') {\n  throw new Error('conversationId is required for this operation.');\n}\n\n$input.item.json.sessionData = {\n  conversationId,\n  userId,\n  projectId,\n  initialPrompt,\n  currentUserMessage,\n  userSkillLevel,\n  projectName,\n  requestType,\n  messages: [], // Will be populated from DB or with new message\n  analysisResult: null, // Will be populated from DB or new analysis\n  openQuestions: [], // Will be populated\n  specId: null // Will be populated\n};\n\nreturn $input.item.json;"
+      },
+      "id": "prepare-initial-session",
+      "name": "Prepare Session Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -350,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "conversations",
+        "columns": "*",
+        "filters": {
+          "filters": [
+            {
+              "field": "id",
+              "compare": "equal",
+              "value": "={{$json.sessionData.conversationId}}"
+            }
+          ]
+        },
+        "options": {\n  "limit": 1\n}
+      },
+      "id": "db-load-conversation",
+      "name": "DB: Load Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "functionCode": "const loadedConversation = $items(\"DB: Load Conversation\")[0]?.json;\nconst session = $json.sessionData;\n\nif (session.requestType === 'start_conversation') {\n  if (loadedConversation) {\n    // This should ideally not happen if IDs are unique, but handle it.\n    // Maybe append to existing or throw error - for now, let's assume new if start_conversation\n    console.warn(`Conversation ID ${session.conversationId} already exists. Treating as new.`);\n  }\n  session.messages = [{ role: 'user', content: session.initialPrompt, timestamp: new Date().toISOString() }];\n  session.status = 'pending_initial_analysis';\n} else if (loadedConversation) {\n  // Merge loaded data into sessionData\n  session.messages = loadedConversation.messages || [];\n  if (session.currentUserMessage) { // Add new message if present\n    session.messages.push({ role: 'user', content: session.currentUserMessage, timestamp: new Date().toISOString() });\n  }\n  session.initialPrompt = loadedConversation.initial_prompt || session.initialPrompt;\n  session.projectName = loadedConversation.project_name || session.projectName;\n  session.userSkillLevel = loadedConversation.user_skill_level || session.userSkillLevel;\n  session.analysisResult = loadedConversation.analysis_result || null;\n  session.openQuestions = loadedConversation.open_questions || [];\n  session.specId = loadedConversation.spec_id || null;\n  session.projectId = loadedConversation.project_id || session.projectId;\n  session.status = loadedConversation.stage || 'clarifying'; // Default to clarifying if loaded\n} else if (session.requestType !== 'start_conversation'){\n  // Trying to process message for a non-existent conversation\n  throw new Error(`Conversation with ID ${session.conversationId} not found.`);\n}\n\n// Determine next action\nif (session.requestType === 'generate_specification') {\n  session.nextAction = 'generate_specification';\n} else if (!session.analysisResult || session.requestType === 'start_conversation') {\n  session.nextAction = 'analyze_message'; // Initial analysis or re-analysis if new message\n} else if (session.analysisResult && session.analysisResult.clarifying_questions_still_needed && session.analysisResult.clarifying_questions_still_needed.length > 0) {\n  session.nextAction = 'ask_clarifying_question';\n} else {\n  // No more questions, user might be confirming to generate spec or providing final info\n  session.nextAction = 'analyze_message'; // Re-analyze to see if spec generation is appropriate\n}\n\nreturn $json;"
+      },
+      "id": "merge-db-data-determine-action",
+      "name": "Merge DB Data & Determine Action",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        150,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.sessionData.nextAction}}",
+              "value2": "analyze_message"
+            }
+          ]
+        }
+      },
+      "id": "if-analyze-message",
+      "name": "IF: Analyze Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const session = $json.sessionData;\nconst prompt = `System:\nYou are an expert Software Requirements Analyst AI. Your primary goal is to meticulously analyze user project descriptions and ongoing conversation turns to extract structured information. You must adhere strictly to the requested JSON output format. If you are uncertain about any piece of information or cannot confidently extract it, use a null value for that field or an empty array where appropriate. Crucially, you must provide an overall confidence score for your analysis and detailed notes on any uncertainties. If the user's request is clearly outside the scope of software project specification (e.g., asking for personal advice, general knowledge, or engaging in casual chat not related to a project), set the intent to \"out_of_scope\" and provide a polite, brief response in the 'analysis_summary' explaining this.\n\nUser Input Context:\n${JSON.stringify({\n  user_id: session.userId,\n  project_id: session.projectId,\n  conversation_id: session.conversationId,\n  current_user_message: session.currentUserMessage,\n  conversation_history: session.messages.slice(-5), // Last 5 messages for context\n  user_skill_level: session.userSkillLevel,\n  previous_analysis_summary: session.analysisResult?.analysis_summary || \"No previous analysis.\"\n}, null, 2)}\n\nInstructions for this turn:\n1.  Review the \`current_user_message\` in the context of \`conversation_history\` and \`user_skill_level\`.\n2.  Determine the primary \`user_intent_current_turn\` (e.g., 'provide_initial_project_idea', 'answer_clarification_question', 'add_new_requirement', 'request_spec_generation', 'out_of_scope', 'general_chat').\n3.  If intent is 'answer_clarification_question', identify which question ID (from \`previous_analysis.clarifying_questions_next\`) is being answered.\n4.  Extract \`new_entities_mentioned\` (features, user roles, data objects, external systems) from the \`current_user_message\`.\n5.  Based on the *entire conversation so far* and the \`current_user_message\`, generate a list of \`clarifying_questions_still_needed\`. These should be specific, actionable questions to ask the user to fill information gaps for a complete specification. Prioritize them. If no more questions are needed, this array should be empty.\n6.  Extract any \`new_or_updated_requirements\` (functional or non-functional) from the \`current_user_message\`.\n7.  Provide an \`current_turn_analysis_confidence_score\` (0.0 to 1.0) for this analysis.\n8.  Provide \`confidence_notes\` detailing uncertainties or assumptions.\n\nOutput JSON Format (Strict Adherence Required):\n${JSON.stringify({\n  analysis_summary: \"string\",\n  user_intent_current_turn: \"string\",\n  answered_question_id: \"string | null\",\n  new_entities_mentioned: [\n    {name: \"string\", type: \"feature | user_role | data_object | external_system\", description: \"string\"}\n  ],\n  clarifying_questions_still_needed: [\n    {question_id: \"string\", question_text: \"string\", priority: \"high | medium | low\", context_for_question: \"string\"}\n  ],\n  new_or_updated_requirements: [\n    {type: \"functional | non-functional\", description: \"string\", category_if_nfr: \"string | null\"}\n  ],\n  current_turn_analysis_confidence_score: 0.0,\n  confidence_notes: \"string\"\n}, null, 2)}\n`;\n$json.analysisPrompt = prompt;\nreturn $json;"
+      },
+      "id": "prepare-analysis-prompt",
+      "name": "Prepare Analysis Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "model": "gpt-4o",
+        "text": "={{$json.analysisPrompt}}",
+        "options": {
+          "temperature": 0.3,
+          "responseFormatJson": true
+        }
+      },
+      "id": "openai-analyze-message",
+      "name": "OpenAI: Analyze Message",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        800,
+        200
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const aiResponse = $json.choices[0].message.content;\nlet analysisResult;\ntry {\n  analysisResult = JSON.parse(aiResponse);\n} catch (e) {\n  console.error('Failed to parse AI analysis JSON:', e, 'Raw response:', aiResponse);\n  // Try to extract JSON from potentially malformed string\n  const jsonMatch = aiResponse.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch && jsonMatch[0]) {\n    try { analysisResult = JSON.parse(jsonMatch[0]); } catch (e2) { /* still failed */ }\n  }\n  if (!analysisResult) {\n    analysisResult = {\n      analysis_summary: 'Error: AI response was not valid JSON.',\n      user_intent_current_turn: 'error_parsing_response',\n      clarifying_questions_still_needed: [],\n      current_turn_analysis_confidence_score: 0.1,\n      confidence_notes: 'AI response was not valid JSON. Raw: ' + aiResponse.substring(0, 200)\n    };\n  }\n}\n\n$json.sessionData.analysisResult = analysisResult;\n$json.sessionData.messages[session.messages.length -1].analysisResult = analysisResult; // Attach to last user message\n\n// Update open questions based on new analysis\n$json.sessionData.openQuestions = analysisResult.clarifying_questions_still_needed || [];\n\n// Check for human review\n$json.sessionData.needsHumanReview = false;\nif (analysisResult.current_turn_analysis_confidence_score < 0.75) {\n  $json.sessionData.needsHumanReview = true;\n  $json.sessionData.humanReviewReason = `Low AI analysis confidence: ${analysisResult.current_turn_analysis_confidence_score.toFixed(2)}. Notes: ${analysisResult.confidence_notes}`;\n  $json.sessionData.contentForReview = analysisResult;\n}\n\nreturn $json;"
+      },
+      "id": "process-analysis-result",
+      "name": "Process Analysis Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.sessionData.nextAction}}",
+              "value2": "ask_clarifying_question"
+            }
+          ]
+        }
+      },
+      "id": "if-ask-clarifying-question",
+      "name": "IF: Ask Clarifying Question?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const session = $json.sessionData;\nlet responseMessage = 'An error occurred, or I am unsure how to proceed.';\n\nif (session.analysisResult && session.analysisResult.user_intent_current_turn === 'out_of_scope') {\n  responseMessage = session.analysisResult.analysis_summary || \"I can only assist with software project specifications. How can I help with that?\";\n} else if (session.openQuestions && session.openQuestions.length > 0) {\n  // Ask the highest priority question\n  const sortedQuestions = [...session.openQuestions].sort((a, b) => {\n    const priorityOrder = { high: 0, medium: 1, low: 2 };\n    return priorityOrder[a.priority] - priorityOrder[b.priority];\n  });\n  responseMessage = sortedQuestions[0].question_text;\n  // Optionally, remove the asked question from openQuestions or mark as asked\n  // For simplicity, we'll let the next analysis phase determine remaining questions\n} else if (session.requestType === 'generate_specification' || (session.analysisResult && session.analysisResult.user_intent_current_turn === 'request_spec_generation')) {\n   // This path should be handled by the 'generate_specification' branch primarily\n   // but if it falls through, it means we are ready to generate.\n  responseMessage = \"I have enough information. I will now generate the specification.\";\n  // This would then loop back or set a flag to trigger spec generation path\n} else {\n  // Default if no questions and not explicitly generating spec yet\n  responseMessage = session.analysisResult?.analysis_summary || \"Thanks for the information! What would you like to do next? You can ask me to generate the specification, or provide more details.\";\n}\n\n$json.responseToUser = {\n  message: responseMessage,\n  conversationId: session.conversationId,\n  stage: session.status, // This should be updated based on action\n  specId: session.specId,\n  needsHumanReview: session.needsHumanReview || false\n};\n\n// Update conversation status for DB\nif (session.openQuestions && session.openQuestions.length > 0) {\n  session.status = 'clarifying';\n} else if (!session.specId) {\n  session.status = 'ready_for_spec_generation';\n} else {\n  session.status = 'completed';\n}\n\nreturn $json;"
+      },
+      "id": "prepare-clarification-response",
+      "name": "Prepare Clarification/Next Step Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.sessionData.nextAction}}",
+              "value2": "generate_specification"
+            }
+          ]
+        }
+      },
+      "id": "if-generate-specification",
+      "name": "IF: Generate Specification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        400,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const session = $json.sessionData;\nconst prompt = `System:\nYou are a Senior Software Architect and Technical Writer AI. Your task is to generate a comprehensive, actionable, and professional software project specification document in JSON format. Base this on all provided context, including the initial prompt, the full conversation history (Q&A), and accumulated AI analyses. Adhere strictly to the specified JSON output format. If critical information remains missing or ambiguous despite the conversation, clearly document these gaps in the 'pending_clarifications_for_development' section. Your specification should be detailed enough for a development team to begin work.\n\nContext:\n${JSON.stringify({\n  user_id: session.userId,\n  project_id: session.projectId,\n  conversation_id: session.conversationId,\n  initial_project_description: session.initialPrompt,\n  user_skill_level: session.userSkillLevel,\n  full_conversation_history_and_analyses: session.messages, // Array of {role, content, timestamp, ?analysisResult}\n  project_name_suggestion: session.projectName || 'To be determined'\n}, null, 2)}\n\nInstructions:\n1.  Synthesize ALL provided information into a coherent and detailed specification.\n2.  Define clear, specific, measurable, achievable, relevant, and time-bound (SMART) functional requirements (FRs). Include acceptance criteria for each FR.\n3.  Define relevant non-functional requirements (NFRs) covering aspects like performance, security, usability, scalability, maintainability, reliability, accessibility, etc. Provide measurable targets for NFRs.\n4.  Propose a suitable technology stack (frontend, backend, database, deployment) with brief justifications, considering the project's nature, requirements, and potentially the user's skill level if indicated.\n5.  Outline high-level project milestones with estimated durations and key deliverables for each.\n6.  Identify key assumptions made during specification generation and potential risks associated with the project, along with suggested mitigation strategies.\n7.  If, after reviewing all information, there are still critical gaps, list them under 'pending_clarifications_for_development'.\n8.  Provide an \`overall_specification_confidence_score\` (0.0 to 1.0) for the completeness, accuracy, and actionability of this generated specification.\n9.  Provide \`specification_generation_notes\` detailing any significant decisions, interpretations, or assumptions made during the specification generation process.\n\nOutput JSON Format (Strict Adherence Required):\n${JSON.stringify({\n  project_name: \"string\",\n  version: \"1.0\",\n  generated_at: new Date().toISOString(),\n  executive_summary: \"string\",\n  target_audience: [\"string\"],\n  goals_and_objectives: [{goal_id: \"G1\", description: \"string\"}],\n  scope: {in_scope: [\"string\"], out_of_scope: [\"string\"]},\n  functional_requirements: [{id: \"FR-001\", title: \"string\", user_story: \"As a [user role], I want to [action] so that [benefit].\", description: \"Detailed explanation.\", acceptance_criteria: [\"string\"], priority: \"Must Have | Should Have | Could Have\", dependencies: [\"FR-XXX\"]}],\n  non_functional_requirements: [{id: \"NFR-001\", category: \"Performance | Security | etc.\", description: \"string\", metric_target: \"string\"}],\n  data_models_overview: [{model_name: \"string\", description: \"string\", key_attributes: [{name: \"string\", type: \"string\", is_required: true}], relationships: [\"string\"]}],\n  user_interface_ux_guidelines_preliminary: [{guideline_id: \"UXG-001\", area: \"Navigation | Forms | etc.\", description: \"string\"}],\n  technology_stack_proposal: {frontend: {technology: \"string\", reasoning: \"string\"}, backend: {technology: \"string\", reasoning: \"string\"}, database: {technology: \"string\", reasoning: \"string\"}, deployment_environment: {platform: \"string\", reasoning: \"string\"}, key_third_party_integrations: [{service_name: \"string\", purpose: \"string\"}]},\n  project_milestones_high_level: [{milestone_id: \"M1\", name: \"string\", description: \"string\", key_deliverables: [\"string\"], estimated_duration: \"string\"}],\n  key_assumptions_made: [\"string\"],\n  potential_risks_and_mitigations: [{risk_id: \"R1\", description: \"string\", likelihood: \"High | Medium | Low\", impact: \"High | Medium | Low\", suggested_mitigation: \"string\"}],\n  pending_clarifications_for_development: [{item_id: \"PC1\", area_affected: \"string\", question_or_gap: \"string\"}],\n  glossary_of_terms: [{term: \"string\", definition: \"string\"}],\n  overall_specification_confidence_score: 0.0,\n  specification_generation_notes: \"string\"\n}, null, 2)}\n`;\n$json.specificationPrompt = prompt;\nreturn $json;"
+      },
+      "id": "prepare-specification-prompt",
+      "name": "Prepare Specification Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        600,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "model": "gpt-4o",
+        "text": "={{$json.specificationPrompt}}",
+        "options": {
+          "temperature": 0.3,
+          "responseFormatJson": true
+        }
+      },
+      "id": "openai-generate-specification",
+      "name": "OpenAI: Generate Specification",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        800,
+        600
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const aiResponse = $json.choices[0].message.content;\nlet specResult;\ntry {\n  specResult = JSON.parse(aiResponse);\n} catch (e) {\n  console.error('Failed to parse AI specification JSON:', e, 'Raw response:', aiResponse);\n  const jsonMatch = aiResponse.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch && jsonMatch[0]) {\n    try { specResult = JSON.parse(jsonMatch[0]); } catch (e2) { /* still failed */ }\n  }\n  if (!specResult) {\n    specResult = {\n      project_name: $json.sessionData.projectName || 'Error Spec',\n      executive_summary: 'Error: AI response for specification was not valid JSON.',\n      overall_specification_confidence_score: 0.1,\n      specification_generation_notes: 'AI response was not valid JSON. Raw: ' + aiResponse.substring(0,500)\n    };\n  }\n}\n\n$json.sessionData.specificationResult = specResult;\n$json.sessionData.specId = $json.sessionData.specId || Date.now().toString(36); // Generate new specId if not exists\n$json.sessionData.status = 'completed';\n\n// Check for human review\n$json.sessionData.needsHumanReview = false;\nif (specResult.overall_specification_confidence_score < 0.8) {\n  $json.sessionData.needsHumanReview = true;\n  $json.sessionData.humanReviewReason = `Low AI specification confidence: ${specResult.overall_specification_confidence_score.toFixed(2)}. Notes: ${specResult.specification_generation_notes}`;\n  $json.sessionData.contentForReview = specResult;\n}\n\n$json.responseToUser = {\n  message: $json.sessionData.needsHumanReview ? \"Specification generated, but requires human review due to low confidence.\" : \"Specification generated successfully!\",\n  conversationId: $json.sessionData.conversationId,\n  stage: $json.sessionData.status,\n  specId: $json.sessionData.specId,\n  needsHumanReview: $json.sessionData.needsHumanReview\n};\n\nreturn $json;"
+      },
+      "id": "process-specification-result",
+      "name": "Process Specification Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": "public",
+        "table": "specifications",
+        "columns": "id, conversation_id, user_id, project_name, content, version, created_at, updated_at",
+        "upsertConflictTarget": "id",
+        "additionalFields": {}
+      },
+      "id": "db-save-specification",
+      "name": "DB: Save Specification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.sessionData.needsHumanReview}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-human-review-needed-final",
+      "name": "IF: Human Review Needed (Final)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "human_review_tasks",
+        "columns": "project_id, conversation_id, spec_id, relevant_section, reason_for_review, status, content_for_review, llm_confidence_details",
+        "additionalFields": {}
+      },
+      "id": "db-log-human-review-task-final",
+      "name": "DB: Log Human Review Task",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const session = $json.sessionData;\nconst dbOp = $json.sessionData.requestType === 'start_conversation' ? 'insert' : 'update';\n\nconst values = {\n  id: session.conversationId,\n  user_id: session.userId,\n  project_id: session.projectId,\n  project_name: session.projectName,\n  user_skill_level: session.userSkillLevel,\n  stage: session.status,\n  initial_prompt: session.initialPrompt,\n  messages: session.messages,\n  open_questions: session.openQuestions,\n  analysis_result: session.analysisResult,\n  spec_id: session.specId,\n  updated_at: new Date().toISOString()\n};\n\nif (dbOp === 'insert') {\n  values.created_at = new Date().toISOString();\n}\n\n$json.dbOperation = dbOp;\n$json.dbValues = values;\n\nreturn $json;"
+      },
+      "id": "prepare-db-conversation-update",
+      "name": "Prepare DB Conversation Update/Insert",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1700,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "={{$json.dbOperation}}",
+        "schema": "public",
+        "table": "conversations",
+        "columns": "id, user_id, project_id, project_name, user_skill_level, stage, initial_prompt, messages, open_questions, analysis_result, spec_id, updated_at" // created_at handled by function if insert
+        ,
+        "filters": {
+          "filters": [
+            {
+              "field": "id",
+              "compare": "equal",
+              "value": "={{$json.dbValues.id}}"
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "db-save-conversation-state",
+      "name": "DB: Save Conversation State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1950,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json.responseToUser}}",
+        "options": {}
+      },
+      "id": "respond-to-user",
+      "name": "Respond to User",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        400
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger-main",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -350,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const error = $input.item.json.error;\nconst execution = $input.item.json.execution;\nconst conversationId = execution?.data?.json?.sessionData?.conversationId || 'unknown_conversation';\nconst userId = execution?.data?.json?.sessionData?.userId || 'unknown_user';\n\nconst errorDetails = {\n  conversationId: conversationId,\n  userId: userId,\n  errorMessage: error.message,\n  nodeName: error.node?.name || 'unknown_node',\n  nodeType: error.node?.type || 'unknown_type',\n  stack: error.stack,\n  timestamp: new Date().toISOString()\n};\n\n// Log to n8n console for immediate debugging\nconsole.error('Workflow Error:', JSON.stringify(errorDetails, null, 2));\n\n$input.item.json.formattedError = errorDetails;\nreturn $input.item.json;"
+      },
+      "id": "format-error-details-main",
+      "name": "Format Error Details",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "conversations",
+        "columns": "stage, error_details",
+        "filters": {
+          "filters": [
+            {
+              "field": "id",
+              "compare": "equal",
+              "value": "={{$json.formattedError.conversationId}}"
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "db-log-error-to-conversation",
+      "name": "DB: Log Error to Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        150,
+        800
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: true, message: $json.formattedError.errorMessage, conversationId: $json.formattedError.conversationId, details: 'An internal error occurred. Please try again later or contact support.' } }}",
+        "responseCode": 500,
+        "options": {}
+      },
+      "id": "respond-error-main",
+      "name": "Respond with Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        400,
+        800
+      ]
+    }
+  ],
+  "connections": {
+    "webhook-start-conversation": {
+      "main": [
+        [
+          {
+            "node": "prepare-initial-session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "webhook-process-message": {
+      "main": [
+        [
+          {
+            "node": "prepare-initial-session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "webhook-generate-spec": {
+      "main": [
+        [
+          {
+            "node": "prepare-initial-session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-initial-session": {
+      "main": [
+        [
+          {
+            "node": "db-load-conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-load-conversation": {
+      "main": [
+        [
+          {
+            "node": "merge-db-data-determine-action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "merge-db-data-determine-action": {
+      "main": [
+        [
+          {
+            "node": "if-analyze-message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if-analyze-message": {
+      "main": [
+        [
+          {
+            "node": "prepare-analysis-prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "if-ask-clarifying-question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-analysis-prompt": {
+      "main": [
+        [
+          {
+            "node": "openai-analyze-message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "openai-analyze-message": {
+      "main": [
+        [
+          {
+            "node": "process-analysis-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "process-analysis-result": {
+      "main": [
+        [
+          {
+            "node": "if-human-review-needed-final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if-ask-clarifying-question": {
+      "main": [
+        [
+          {
+            "node": "prepare-clarification-response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "if-generate-specification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-clarification-response": {
+      "main": [
+        [
+          {
+            "node": "if-human-review-needed-final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if-generate-specification": {
+      "main": [
+        [
+          {
+            "node": "prepare-specification-prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-specification-prompt": {
+      "main": [
+        [
+          {
+            "node": "openai-generate-specification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "openai-generate-specification": {
+      "main": [
+        [
+          {
+            "node": "process-specification-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "process-specification-result": {
+      "main": [
+        [
+          {
+            "node": "db-save-specification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-save-specification": {
+      "main": [
+        [
+          {
+            "node": "if-human-review-needed-final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if-human-review-needed-final": {
+      "main": [
+        [
+          {
+            "node": "db-log-human-review-task-final",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "prepare-db-conversation-update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-log-human-review-task-final": {
+      "main": [
+        [
+          {
+            "node": "prepare-db-conversation-update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-db-conversation-update": {
+      "main": [
+        [
+          {
+            "node": "db-save-conversation-state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-save-conversation-state": {
+      "main": [
+        [
+          {
+            "node": "respond-to-user",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "error-trigger-main": {
+      "main": [
+        [
+          {
+            "node": "format-error-details-main",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "format-error-details-main": {
+      "main": [
+        [
+          {
+            "node": "db-log-error-to-conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-log-error-to-conversation": {
+      "main": [
+        [
+          {
+            "node": "respond-error-main",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "error-trigger-main" // Ensure this matches the name of your Error Trigger node
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true // Set to true if credentials are set up
+  },
+  "id": "optimized-conversation-manager", // Unique ID for the workflow
+  "tags": [
+    {
+      "id": "ai-assistant",
+      "name": "AI Assistant"
+    },
+    {
+      "id": "conversation-management",
+      "name": "Conversation Management"
+    },
+    {
+      "id": "specification-generation",
+      "name": "Specification Generation"
+    }
+  ]
+}

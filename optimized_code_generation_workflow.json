@@ -1,0 +1,930 @@
+{
+  "name": "Optimized Code Generation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "code/generate/optimized",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: Start Code Generation",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const body = $input.item.json.body;\nconst sessionId = body.sessionId || Date.now().toString(36) + Math.random().toString(36).substring(2);\n\n// Initial session data\n$input.item.json.sessionData = {\n  sessionId: sessionId,\n  projectId: body.projectId,\n  userId: body.userId,\n  specId: body.specId,\n  specification: body.specification, // Can be null if specId is provided\n  frameworks: body.frameworks || { frontend: 'react', backend: 'express', database: 'postgresql' },\n  repositoryInfo: body.repositoryInfo, // { owner, name, branch }\n  status: 'pending_setup',\n  filesToGenerate: [],\n  generatedFilesSummary: [],\n  humanReviewTasksCount: 0,\n  totalFilesToGenerate: 0,\n  filesProcessedCount: 0,\n  createdAt: new Date().toISOString()\n};\n\nreturn $input.item.json;"
+      },
+      "id": "prepare-initial-data",
+      "name": "Prepare Initial Data & Session",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": "public",
+        "table": "code_generation_sessions",
+        "columns": "id, project_id, user_id, spec_id, status, model_used, created_at, frameworks, repository_info",
+        "upsertConflictTarget": "id",
+        "additionalFields": {}
+      },
+      "id": "db-log-session-start",
+      "name": "DB: Log Session Start/Update",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.sessionData.specification}}",
+              "operation": "isEmpty"
+            }
+          ],
+          "boolean": [
+            {
+              "value1": "={{$json.sessionData.specId !== undefined && $json.sessionData.specId !== null && $json.sessionData.specId !== ''}}"
+            }
+          ]
+        },
+        "options": {
+          "combineOperation": "all"
+        }
+      },
+      "id": "if-fetch-spec",
+      "name": "IF: Fetch Specification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "specifications",
+        "columns": "content",
+        "filters": {
+          "filters": [
+            {
+              "field": "id",
+              "compare": "equal",
+              "value": "={{$json.sessionData.specId}}"
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "db-fetch-spec",
+      "name": "DB: Fetch Specification by ID",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        600,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const specContent = $json.content; // Assuming content is the JSON spec\n$input.item.json.sessionData.specification = specContent;\nreturn $input.item.json;"
+      },
+      "id": "set-fetched-spec",
+      "name": "Set Fetched Specification",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const spec = $json.sessionData.specification;\nlet filesToGenerate = [];\n// Example: Flatten project_structure from spec into a list of files\n// This logic depends heavily on the spec.content.project_structure format\n// For now, assuming spec.content.files is an array of { path, purpose, type, dependencies, complexity_score (1-5) }\nif (spec && spec.project_structure) {\n  const structure = spec.project_structure;\n  if (structure.frontend) filesToGenerate.push(...structure.frontend.map(f => ({...f, category: 'frontend'})));\n  if (structure.backend) filesToGenerate.push(...structure.backend.map(f => ({...f, category: 'backend'})));\n  if (structure.database) filesToGenerate.push(...structure.database.map(f => ({...f, category: 'database'})));\n  if (structure.config) filesToGenerate.push(...structure.config.map(f => ({...f, category: 'config'})));\n}\n\n$json.sessionData.filesToGenerate = filesToGenerate;\n$json.sessionData.totalFilesToGenerate = filesToGenerate.length;\n$json.sessionData.status = 'processing_files';\nreturn $json;"
+      },
+      "id": "prepare-file-list",
+      "name": "Prepare File List from Spec",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "code_generation_sessions",
+        "columns": "status, total_files_to_generate",
+        "filters": {
+          "filters": [
+            {
+              "field": "id",
+              "compare": "equal",
+              "value": "={{$json.sessionData.sessionId}}"
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "db-update-session-processing",
+      "name": "DB: Update Session - Processing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        800,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "={{$json.sessionData.filesToGenerate}}",
+        "options": {}
+      },
+      "id": "loop-through-files",
+      "name": "Loop: Through Files",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const fileToGenerate = $json.currentFile; // from SplitOut\nconst sessionData = $json.sessionData;\nconst spec = sessionData.specification;\n\nlet prompt = `Project Overview:\\n${spec.executive_summary || 'A software project.'}\\n\\n`;\nprompt += `Frameworks:\\nFrontend: ${sessionData.frameworks.frontend}\\nBackend: ${sessionData.frameworks.backend}\\nDatabase: ${sessionData.frameworks.database}\\n\\n`;\nprompt += `File to Generate:\\nPath: ${fileToGenerate.file_path}\\nPurpose: ${fileToGenerate.purpose}\\nType: ${fileToGenerate.category}/${fileToGenerate.file_type || 'unknown'}\\n`;\nif(fileToGenerate.dependencies && fileToGenerate.dependencies.length > 0) {\n  prompt += `Dependencies/Related Components: ${fileToGenerate.dependencies.join(', ')}\\n`;\n}\n\nprompt += `Relevant Specification Details:\\n`;\n// Example: Add relevant parts of spec.functional_requirements, spec.data_models etc.\n// This part needs to be smart to extract only relevant info for the current file.\n// For simplicity, we might pass a summary or ask the AI to infer from the full spec if context window allows.\nprompt += `Full Specification (for context, focus on the current file):\\n${JSON.stringify(spec, null, 2).substring(0, 10000)} ... (truncated if too long)\\n\\n`;\nprompt += `Instructions:\\n1. Generate the complete, production-ready code for the file: ${fileToGenerate.file_path}.\n2. Adhere to best practices for ${fileToGenerate.category === 'frontend' ? sessionData.frameworks.frontend : sessionData.frameworks.backend}.\n3. Include necessary imports, comments, and error handling.\n4. Ensure the code is clean, maintainable, and efficient.\n5. Output ONLY the raw code content for the file. Do not include any explanations, markdown formatting, or any text other than the code itself.\n6. After the code, on a new line, provide a JSON object with your confidence score: {\"confidence_score\": 0.0-1.0}.\n`;\n\n$json.generationPrompt = prompt;\nreturn $json;"
+      },
+      "id": "prepare-file-gen-prompt",
+      "name": "Prepare File Generation Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "model": "gpt-4o",
+        "text": "={{$json.generationPrompt}}",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 4000
+        }
+      },
+      "id": "openai-generate-code",
+      "name": "OpenAI: Generate Code",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const rawOutput = $json.text || ($json.choices && $json.choices[0].message.content);\nlet generatedCode = rawOutput;\nlet confidenceScore = 0.5; // Default confidence\n\ntry {\n  const lines = rawOutput.split('\\n');\n  const lastLine = lines[lines.length - 1];\n  const confidenceJson = JSON.parse(lastLine);\n  if (confidenceJson && typeof confidenceJson.confidence_score === 'number') {\n    confidenceScore = confidenceJson.confidence_score;\n    generatedCode = lines.slice(0, -1).join('\\n');\n  } \n} catch (e) {\n  // Confidence score not found or not valid JSON, use default\n  console.warn('Could not parse confidence score from AI output.');\n}\n\n$json.generatedCode = generatedCode;\n$json.aiConfidenceScore = confidenceScore;\nreturn $json;"
+      },
+      "id": "process-ai-code-response",
+      "name": "Process AI Code Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "model": "gpt-4o",
+        "text": "={{`Perform static analysis on the following code for file path '${$json.currentFile.file_path}'. Focus on code quality, potential bugs, security vulnerabilities, and adherence to best practices for the ${$json.currentFile.category === 'frontend' ? $json.sessionData.frameworks.frontend : $json.sessionData.frameworks.backend} framework. Provide a quality score from 0 to 100 (100 being best) and a list of issues with severity (critical, high, medium, low) and suggestions.\n\nCode:\n\`\`\`\n${$json.generatedCode}\n\`\`\`\n\nOutput your analysis as a JSON object with the following structure: {\"quality_score\": number, \"issues\": [{\"severity\": \"string\", \"line\": number, \"description\": \"string\", \"suggestion\": \"string\"}], \"summary\": \"string\"}.`}}",
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 1500
+        }
+      },
+      "id": "openai-static-analysis",
+      "name": "OpenAI: Static Analysis",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "let analysisResult = { quality_score: 50, issues: [], summary: 'Static analysis could not be parsed.' };\ntry {\n  const rawAnalysis = $json.text || ($json.choices && $json.choices[0].message.content);\n  // Attempt to extract JSON from potentially messy output\n  const jsonMatch = rawAnalysis.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch && jsonMatch[0]) {\n    analysisResult = JSON.parse(jsonMatch[0]);\n  } else {\n    analysisResult.issues.push({severity: 'critical', line:0, description: 'Failed to parse static analysis output from AI.', suggestion: 'Review AI prompt for static analysis.'});\n  }\n} catch (e) {\n  console.error('Error parsing static analysis:', e);\n  analysisResult.issues.push({severity: 'critical', line:0, description: 'Exception while parsing static analysis: ' + e.message, suggestion: 'Review AI prompt for static analysis.'});\n}\n\n$json.staticAnalysisResult = analysisResult;\n\n// Decision logic for human review\nlet needsHumanReview = false;\nlet reviewReason = [];\n\nif ($json.aiConfidenceScore < 0.7) {\n  needsHumanReview = true;\n  reviewReason.push(`Low AI confidence (${$json.aiConfidenceScore.toFixed(2)}).`);\n}\nif (analysisResult.quality_score < 60) {\n  needsHumanReview = true;\n  reviewReason.push(`Low quality score (${analysisResult.quality_score}/100).`);\n}\nconst criticalIssues = analysisResult.issues.filter(issue => issue.severity === 'critical' || issue.severity === 'high').length;\nif (criticalIssues > 0) {\n  needsHumanReview = true;\n  reviewReason.push(`${criticalIssues} critical/high severity issues found.`);\n}\n// Add more conditions, e.g. based on currentFile.complexity_score if available\nif ($json.currentFile.complexity_score && $json.currentFile.complexity_score >= 4) {\n    needsHumanReview = true;\n    reviewReason.push(`High file complexity (score: ${$json.currentFile.complexity_score}).`);\n}\n\n$json.needsHumanReview = needsHumanReview;\n$json.reviewReason = reviewReason.join(' ');\n\nreturn $json;"
+      },
+      "id": "process-analysis-decide-review",
+      "name": "Process Analysis & Decide Review",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.needsHumanReview}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-human-review-needed",
+      "name": "IF: Human Review Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "human_review_tasks",
+        "columns": "project_id, code_generation_session_id, file_path, reason_for_review, status, code_content_for_review, static_analysis_results",
+        "additionalFields": {}
+      },
+      "id": "db-log-human-review-task",
+      "name": "DB: Log Human Review Task",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "$json.fileStatus = 'pending_review';\n$json.sessionData.humanReviewTasksCount = ($json.sessionData.humanReviewTasksCount || 0) + 1;\nreturn $json;"
+      },
+      "id": "set-status-pending-review",
+      "name": "Set Status: Pending Review",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "={{$env.SLACK_REVIEW_CHANNEL_ID}}",
+        "text": "={{`Human review needed for file: ${$json.currentFile.file_path} in project ${$json.sessionData.projectId}.\nReason: ${$json.reviewReason}\nSession ID: ${$json.sessionData.sessionId}\nTask ID: ${$node['DB: Log Human Review Task'].json[0].id}`}}",
+        "attachments": [],
+        "otherOptions": {}
+      },
+      "id": "notify-slack-review",
+      "name": "Notify: Slack for Review",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [
+        2800,
+        300
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-creds",
+          "name": "Slack Account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "functionCode": "$json.fileStatus = 'generated';\nreturn $json;"
+      },
+      "id": "set-status-generated",
+      "name": "Set Status: Generated",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "code_files",
+        "columns": "project_id, code_generation_session_id, file_path, file_content, language, status, ai_confidence, static_analysis_results, commit_hash",
+        "additionalFields": {}
+      },
+      "id": "db-store-code-file",
+      "name": "DB: Store Code File",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2600,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const sessionData = $json.sessionData;\nsessionData.filesProcessedCount = (sessionData.filesProcessedCount || 0) + 1;\nsessionData.generatedFilesSummary.push({\n  path: $json.currentFile.file_path,\n  status: $json.fileStatus,\n  reviewNeeded: $json.needsHumanReview,\n  reason: $json.needsHumanReview ? $json.reviewReason : null\n});\nreturn $json;"
+      },
+      "id": "update-progress-summary",
+      "name": "Update Progress & Summary",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        3000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "code_generation_sessions",
+        "columns": "files_processed_count, human_review_tasks_count",
+        "filters": {
+          "filters": [
+            {
+              "field": "id",
+              "compare": "equal",
+              "value": "={{$json.sessionData.sessionId}}"
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "db-update-session-progress",
+      "name": "DB: Update Session Progress",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        3200,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "merge-loop-results",
+      "name": "Merge Loop Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const sessionData = $json[0].sessionData; // Data from the first item after merge\nsessionData.status = sessionData.humanReviewTasksCount > 0 ? 'completed_with_reviews_pending' : 'completed_successfully';\nsessionData.completedAt = new Date().toISOString();\n\nreturn {\n  sessionId: sessionData.sessionId,\n  status: sessionData.status,\n  totalFiles: sessionData.totalFilesToGenerate,\n  filesProcessed: sessionData.filesProcessedCount,\n  humanReviewTasks: sessionData.humanReviewTasksCount,\n  summary: sessionData.generatedFilesSummary,\n  completedAt: sessionData.completedAt\n};"
+      },
+      "id": "finalize-session-data",
+      "name": "Finalize Session Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "code_generation_sessions",
+        "columns": "status, files_processed_count, human_review_tasks_count, result_summary, completed_at",
+        "filters": {
+          "filters": [
+            {
+              "field": "id",
+              "compare": "equal",
+              "value": "={{$json.sessionId}}"
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "db-update-session-final",
+      "name": "DB: Update Session Final Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "respond-to-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        600
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const error = $input.item.json.error;\nconst execution = $input.item.json.execution;\nconst sessionId = execution.data?.json?.sessionData?.sessionId || 'unknown_session';\n\n$input.item.json.errorDetails = {\n  sessionId: sessionId,\n  errorMessage: error.message,\n  nodeName: error.node.name,\n  nodeType: error.node.type,\n  stack: error.stack,\n  status: 'failed',\n  failedAt: new Date().toISOString()\n};\nreturn $input.item.json;"
+      },
+      "id": "format-error-details",
+      "name": "Format Error Details",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        200,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "code_generation_sessions",
+        "columns": "status, error_message",
+        "filters": {
+          "filters": [
+            {
+              "field": "id",
+              "compare": "equal",
+              "value": "={{$json.errorDetails.sessionId}}"
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "db-log-error",
+      "name": "DB: Log Error to Session",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        400,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: true, message: $json.errorDetails.errorMessage, sessionId: $json.errorDetails.sessionId } }}",
+        "responseCode": 500,
+        "options": {}
+      },
+      "id": "respond-error",
+      "name": "Respond with Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        600,
+        700
+      ]
+    }
+  ],
+  "connections": {
+    "webhook-trigger": {
+      "main": [
+        [
+          {
+            "node": "prepare-initial-data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-initial-data": {
+      "main": [
+        [
+          {
+            "node": "db-log-session-start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-log-session-start": {
+      "main": [
+        [
+          {
+            "node": "if-fetch-spec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if-fetch-spec": {
+      "main": [
+        [
+          {
+            "node": "db-fetch-spec",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "prepare-file-list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-fetch-spec": {
+      "main": [
+        [
+          {
+            "node": "set-fetched-spec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "set-fetched-spec": {
+      "main": [
+        [
+          {
+            "node": "prepare-file-list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-file-list": {
+      "main": [
+        [
+          {
+            "node": "db-update-session-processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-update-session-processing": {
+      "main": [
+        [
+          {
+            "node": "loop-through-files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "loop-through-files": {
+      "main": [
+        [
+          {
+            "node": "prepare-file-gen-prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-file-gen-prompt": {
+      "main": [
+        [
+          {
+            "node": "openai-generate-code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "openai-generate-code": {
+      "main": [
+        [
+          {
+            "node": "process-ai-code-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "process-ai-code-response": {
+      "main": [
+        [
+          {
+            "node": "openai-static-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "openai-static-analysis": {
+      "main": [
+        [
+          {
+            "node": "process-analysis-decide-review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "process-analysis-decide-review": {
+      "main": [
+        [
+          {
+            "node": "if-human-review-needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if-human-review-needed": {
+      "main": [
+        [
+          {
+            "node": "db-log-human-review-task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "set-status-generated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-log-human-review-task": {
+      "main": [
+        [
+          {
+            "node": "set-status-pending-review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "set-status-pending-review": {
+      "main": [
+        [
+          {
+            "node": "notify-slack-review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "notify-slack-review": {
+        "main": [
+          [
+            {
+              "node": "db-store-code-file",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+    },
+    "set-status-generated": {
+      "main": [
+        [
+          {
+            "node": "db-store-code-file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-store-code-file": {
+      "main": [
+        [
+          {
+            "node": "update-progress-summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update-progress-summary": {
+      "main": [
+        [
+          {
+            "node": "db-update-session-progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-update-session-progress": {
+      "main": [
+        [
+          {
+            "node": "merge-loop-results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "merge-loop-results": {
+      "main": [
+        [
+          {
+            "node": "finalize-session-data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "finalize-session-data": {
+      "main": [
+        [
+          {
+            "node": "db-update-session-final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-update-session-final": {
+      "main": [
+        [
+          {
+            "node": "respond-to-webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "error-trigger": {
+      "main": [
+        [
+          {
+            "node": "format-error-details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "format-error-details": {
+      "main": [
+        [
+          {
+            "node": "db-log-error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-log-error": {
+      "main": [
+        [
+          {
+            "node": "respond-error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "error-trigger"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "optimized-code-gen-workflow",
+  "tags": [
+    {
+      "id": "ai-assistant",
+      "name": "AI Assistant"
+    },
+    {
+      "id": "code-generation",
+      "name": "Code Generation"
+    }
+  ]
+}

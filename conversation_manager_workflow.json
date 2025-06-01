@@ -1,0 +1,847 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "specification/start",
+        "options": {}
+      },
+      "id": "1a5f3af0-8c7d-4a3a-9b5c-e0d4c7b1f2e3",
+      "name": "Initialize Conversation",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "specification/message",
+        "options": {}
+      },
+      "id": "2b6f4bg1-9d8e-5b4b-0c6d-f1e5d8c2g3f4",
+      "name": "Process Message",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract data from the webhook payload\nconst data = $input.item.json.body || $input.item.json;\n\n// Generate a unique conversation ID if this is a new conversation\nlet conversationId;\nif (!data.conversationId) {\n  conversationId = Date.now().toString(36) + Math.random().toString(36).substring(2);\n} else {\n  conversationId = data.conversationId;\n}\n\n// Prepare the conversation initialization data\nreturn {\n  conversationId,\n  initialPrompt: data.initialPrompt || data.message || '',\n  projectName: data.projectName || 'Untitled Project',\n  userSkillLevel: data.userSkillLevel || 'intermediate',\n  stage: 'collecting',\n  timestamp: new Date().toISOString(),\n  messages: [],\n  openQuestions: [],\n  answeredQuestions: {},\n  analyzed: false,\n  specReady: false\n};"
+      },
+      "id": "3c7g5ch2-0e9f-6c5c-1d7e-g2f6e9d3h4g5",
+      "name": "Prepare Conversation Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": "public",
+        "table": "conversations",
+        "columns": "id, project_name, user_skill_level, stage, initial_prompt, created_at, updated_at, messages, open_questions, answered_questions, analyzed, spec_ready",
+        "additionalFields": {}
+      },
+      "id": "4d8h6di3-1f0g-7d6d-2e8f-h3g7f0e4i5h6",
+      "name": "Store Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        650,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"Determine Action\"].json[\"action\"]}}",
+              "value2": "analyze_prompt"
+            }
+          ]
+        }
+      },
+      "id": "5e9i7ej4-2g1h-8e7e-3f9g-i4h8g1f5j6i7",
+      "name": "Is Analyze Prompt?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        850,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "operation": "create",
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 2000
+        }
+      },
+      "id": "6f0j8fk5-3h2i-9f8f-4g0h-j5i9h2g6k7j8",
+      "name": "Analyze Initial Prompt",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Function to determine the next action based on conversation state\nconst conversation = $input.item.json;\n\n// Determine the action to take\nlet action = '';\n\n// If this is a new conversation or it hasn't been analyzed yet\nif (!conversation.analyzed) {\n  action = 'analyze_prompt';\n}\n// If we're in the clarifying stage and have open questions\nelse if (conversation.stage === 'clarifying' && conversation.openQuestions && conversation.openQuestions.length > 0) {\n  action = 'ask_next_question';\n}\n// If we're in the clarifying stage but have no more questions\nelse if (conversation.stage === 'clarifying' && (!conversation.openQuestions || conversation.openQuestions.length === 0)) {\n  action = 'generate_specification';\n}\n// If we have a new user message to process\nelse if (conversation.newMessage) {\n  action = 'process_message';\n}\n// If the specification is ready\nelse if (conversation.specReady) {\n  action = 'return_specification';\n}\n// Default fallback\nelse {\n  action = 'continue_conversation';\n}\n\nreturn { ...conversation, action };"
+      },
+      "id": "7g1k9gl6-4i3j-0g9g-5h1i-k6j0i3h7l8k9",
+      "name": "Determine Action",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        650,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "={{$json.initialPrompt}}\n\nYou are an expert software requirements analyst. Analyze the above project description and extract key information in JSON format with the following structure:\n\n{\n  \"entities\": [\n    {\n      \"name\": \"string\",\n      \"type\": \"string\",\n      \"description\": \"string\",\n      \"confidence\": float\n    }\n  ],\n  \"missing_info\": [\n    {\n      \"question\": \"string\",\n      \"context\": \"string\",\n      \"priority\": integer,\n      \"related_entities\": [\"string\"]\n    }\n  ],\n  \"technical_terms\": [\n    {\n      \"layman_term\": \"string\",\n      \"technical_equivalent\": \"string\",\n      \"explanation\": \"string\",\n      \"confidence\": float\n    }\n  ],\n  \"requirements\": {\n    \"functional\": [\"string\"],\n    \"non_functional\": [\"string\"],\n    \"constraints\": [\"string\"]\n  },\n  \"intent\": \"string\",\n  \"confidence\": float\n}\n\nEnsure your response is valid JSON that can be parsed. Include at least 5 critical questions in missing_info, prioritized by importance."
+      },
+      "id": "8h2l0hm7-5j4k-1h0h-6i2j-l7k1j4i8m9l0",
+      "name": "Prompt for Analysis",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse the OpenAI response to extract the JSON analysis\nlet analysisResult;\ntry {\n  // Try to parse the completion text as JSON\n  const completionText = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n  analysisResult = JSON.parse(completionText);\n} catch (error) {\n  // If JSON parsing fails, try to extract JSON from the text\n  const completionText = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n  const jsonMatch = completionText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    try {\n      analysisResult = JSON.parse(jsonMatch[0]);\n    } catch (e) {\n      throw new Error(`Failed to parse analysis result: ${e.message}`);\n    }\n  } else {\n    throw new Error('Could not extract JSON from the analysis result');\n  }\n}\n\n// Extract questions from the analysis\nconst openQuestions = analysisResult.missing_info.map(info => info.question);\n\n// Update the conversation with analysis results\nreturn {\n  ...($input.item.json.conversationData || $input.item.json),\n  analysisResult,\n  openQuestions,\n  analyzed: true,\n  stage: 'clarifying'\n};"
+      },
+      "id": "9i3m1in8-6k5l-2i1i-7j3k-m8l2k5j9n0m1",
+      "name": "Process Analysis Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "conversations",
+        "columns": "analyzed, stage, open_questions, analysis_result, updated_at",
+        "additionalFields": {}
+      },
+      "id": "0j4n2jo9-7l6m-3j2j-8k4l-n9m3l6k0o1n2",
+      "name": "Update Conversation with Analysis",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"Determine Action\"].json[\"action\"]}}",
+              "value2": "ask_next_question"
+            }
+          ]
+        }
+      },
+      "id": "1k5o3kp0-8m7n-4k3k-9l5m-o0n4m7l1p2o3",
+      "name": "Is Ask Question?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        850,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Get the next question to ask\nconst conversation = $input.item.json;\nconst nextQuestion = conversation.openQuestions[0];\n\n// Prepare the response\nreturn {\n  conversationId: conversation.id || conversation.conversationId,\n  message: nextQuestion,\n  stage: conversation.stage,\n  awaiting_user: true,\n  spec_ready: false\n};"
+      },
+      "id": "2l6p4lq1-9n8o-5l4l-0m6n-p1o5n8m2q3p4",
+      "name": "Prepare Question Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "3m7q5mr2-0o9p-6m5m-1n7o-q2p6o9n3r4q5",
+      "name": "Send Question Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"Determine Action\"].json[\"action\"]}}",
+              "value2": "process_message"
+            }
+          ]
+        }
+      },
+      "id": "4n8r6ns3-1p0q-7n6n-2o8p-r3q7p0o4s5r6",
+      "name": "Is Process Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        850,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Process the user's message\nconst conversation = $input.item.json;\nconst message = conversation.newMessage;\n\n// If we're in clarifying stage, record the answer to the current question\nif (conversation.stage === 'clarifying' && conversation.openQuestions && conversation.openQuestions.length > 0) {\n  const currentQuestion = conversation.openQuestions[0];\n  \n  // Update the conversation state\n  const updatedConversation = {\n    ...conversation,\n    answeredQuestions: {\n      ...conversation.answeredQuestions,\n      [currentQuestion]: message\n    },\n    messages: [...(conversation.messages || []), \n      { role: 'user', content: message, timestamp: new Date().toISOString() }\n    ],\n    // Remove the answered question from open questions\n    openQuestions: conversation.openQuestions.slice(1)\n  };\n  \n  return updatedConversation;\n}\n\n// Default case: just add the message to the conversation\nreturn {\n  ...conversation,\n  messages: [...(conversation.messages || []), \n    { role: 'user', content: message, timestamp: new Date().toISOString() }\n  ]\n};"
+      },
+      "id": "5o9s7ot4-2q1r-8o7o-3p9q-s4r8q1p5t6s7",
+      "name": "Process User Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "conversations",
+        "columns": "messages, open_questions, answered_questions, updated_at",
+        "additionalFields": {}
+      },
+      "id": "6p0t8pu5-3r2s-9p8p-4q0r-t5s9r2q6u7t8",
+      "name": "Update Conversation with Message",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"Determine Action\"].json[\"action\"]}}",
+              "value2": "generate_specification"
+            }
+          ]
+        }
+      },
+      "id": "7q1u9qv6-4s3t-0q9q-5r1s-u6t0s3r7v8u9",
+      "name": "Is Generate Spec?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        850,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "operation": "create",
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 4000
+        }
+      },
+      "id": "8r2v0rw7-5t4u-1r0r-6s2t-v7u1t4s8w9v0",
+      "name": "Generate Specification",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        700
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "={{\"content\": `You are a software specification expert. Based on the following project information and Q&A, generate a comprehensive software specification document in JSON format.\n\nInitial Project Description:\n${$json.initialPrompt}\n\nUser Skill Level: ${$json.userSkillLevel}\n\nQuestion and Answer Session:\n${Object.entries($json.answeredQuestions).map(([q, a]) => `Q: ${q}\\nA: ${a}`).join('\\n\\n')}\n\nAnalysis Results:\n${JSON.stringify($json.analysisResult, null, 2)}\n\nGenerate a comprehensive specification document with the following structure:\n{\n  \"project_name\": \"string\",\n  \"executive_summary\": \"string\",\n  \"functional_requirements\": [\n    {\n      \"id\": \"FR-001\",\n      \"title\": \"string\",\n      \"description\": \"string\",\n      \"priority\": \"High|Medium|Low\"\n    }\n  ],\n  \"non_functional_requirements\": [\n    {\n      \"id\": \"NFR-001\",\n      \"category\": \"Performance|Security|Scalability|Usability|etc\",\n      \"description\": \"string\",\n      \"acceptance_criteria\": \"string\"\n    }\n  ],\n  \"constraints\": [\n    {\n      \"id\": \"CON-001\",\n      \"description\": \"string\"\n    }\n  ],\n  \"tech_stack\": {\n    \"frontend\": \"string\",\n    \"backend\": \"string\",\n    \"database\": \"string\",\n    \"deployment\": \"string\",\n    \"additional_services\": [\"string\"]\n  },\n  \"milestones\": [\n    {\n      \"id\": \"M1\",\n      \"name\": \"string\",\n      \"duration\": \"string\",\n      \"tasks\": [\"string\"],\n      \"dependencies\": [\"string\"]\n    }\n  ],\n  \"assumptions\": [\"string\"],\n  \"risks\": [\n    {\n      \"description\": \"string\",\n      \"impact\": \"High|Medium|Low\",\n      \"mitigation\": \"string\"\n    }\n  ],\n  \"estimated_timeline\": \"string\",\n  \"estimated_budget_range\": \"string\"\n}\n\nEnsure your response is valid JSON that can be parsed. Be specific, detailed, and comprehensive in all sections.`}"}
+      },
+      "id": "9s3w1sx8-6u5v-2s1s-7t3u-w8v2u5t9x0w1",
+      "name": "Prompt for Specification",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse the OpenAI response to extract the JSON specification\nlet specificationResult;\ntry {\n  // Try to parse the completion text as JSON\n  const completionText = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n  specificationResult = JSON.parse(completionText);\n} catch (error) {\n  // If JSON parsing fails, try to extract JSON from the text\n  const completionText = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n  const jsonMatch = completionText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    try {\n      specificationResult = JSON.parse(jsonMatch[0]);\n    } catch (e) {\n      throw new Error(`Failed to parse specification result: ${e.message}`);\n    }\n  } else {\n    throw new Error('Could not extract JSON from the specification result');\n  }\n}\n\n// Generate a unique spec ID\nconst specId = Date.now().toString(36) + Math.random().toString(36).substring(2);\n\n// Update the conversation with specification results\nreturn {\n  ...($input.item.json.conversationData || $input.item.json),\n  specificationResult,\n  specId,\n  stage: 'completed',\n  specReady: true\n};"
+      },
+      "id": "0t4x2ty9-7v6w-3t2t-8u4v-x9w3v6u0y1x2",
+      "name": "Process Specification Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "specifications",
+        "columns": "id, conversation_id, project_name, content, created_at",
+        "additionalFields": {}
+      },
+      "id": "1u5y3uz0-8w7x-4u3u-9v5w-y0x4w7v1z2y3",
+      "name": "Store Specification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "conversations",
+        "columns": "stage, spec_id, spec_ready, updated_at",
+        "additionalFields": {}
+      },
+      "id": "2v6z4va1-9x8y-5v4v-0w6x-z1y5x8w2a3z4",
+      "name": "Update Conversation with Spec ID",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1650,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare the response with specification completion\nconst conversation = $input.item.json;\n\nreturn {\n  conversationId: conversation.id || conversation.conversationId,\n  message: \"Your project specification is now complete! You can view the full details or ask me questions about it.\",\n  stage: 'completed',\n  awaiting_user: false,\n  spec_ready: true,\n  spec_id: conversation.specId\n};"
+      },
+      "id": "3w7a5wb2-0y9z-6w5w-1x7y-a2z6y9x3b4a5",
+      "name": "Prepare Spec Completion Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1850,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "4x8b6xc3-1z0a-7x6x-2y8z-b3a7z0y4c5b6",
+      "name": "Send Spec Completion Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "specification/:specId",
+        "options": {}
+      },
+      "id": "5y9c7yd4-2a1b-8y7y-3z9a-c4b8a1z5d6c7",
+      "name": "Get Specification",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "specifications",
+        "columns": "*",
+        "additionalFields": {}
+      },
+      "id": "6z0d8ze5-3b2c-9z8z-4a0b-d5c9b2a6e7d8",
+      "name": "Retrieve Specification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        450,
+        800
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "7a1e9af6-4c3d-0a9a-5b1c-e6d0c3b7f8e9",
+      "name": "Send Specification Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        650,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "=An error occurred: {{$error.message}}",
+        "errorDescription": "=Stack: {{$error.stack}}"
+      },
+      "id": "8b2f0bg7-5d4e-1b0b-6c2d-f7e1d4c8g9f0",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        250,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log the error\nconsole.error('Error in workflow:', $input.item.json.errorMessage);\n\n// Return a formatted error response\nreturn {\n  status: 'error',\n  message: $input.item.json.errorMessage,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "9c3g1ch8-6e5f-2c1c-7d3e-g8f2e5d9h0g1",
+      "name": "Format Error Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        450,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "responseCode": 500,
+        "options": {}
+      },
+      "id": "0d4h2di9-7f6g-3d2d-8e4f-h9g3f6e0i1h2",
+      "name": "Send Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        650,
+        900
+      ]
+    }
+  ],
+  "connections": {
+    "Initialize Conversation": {
+      "main": [
+        [
+          {
+            "node": "Prepare Conversation Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Message": {
+      "main": [
+        [
+          {
+            "node": "Prepare Conversation Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Conversation Data": {
+      "main": [
+        [
+          {
+            "node": "Store Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Conversation": {
+      "main": [
+        [
+          {
+            "node": "Determine Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Action": {
+      "main": [
+        [
+          {
+            "node": "Is Analyze Prompt?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Ask Question?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Process Message?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Generate Spec?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Analyze Prompt?": {
+      "true": [
+        [
+          {
+            "node": "Prompt for Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt for Analysis": {
+      "main": [
+        [
+          {
+            "node": "Analyze Initial Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Initial Prompt": {
+      "main": [
+        [
+          {
+            "node": "Process Analysis Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Analysis Result": {
+      "main": [
+        [
+          {
+            "node": "Update Conversation with Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Ask Question?": {
+      "true": [
+        [
+          {
+            "node": "Prepare Question Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Question Response": {
+      "main": [
+        [
+          {
+            "node": "Send Question Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Process Message?": {
+      "true": [
+        [
+          {
+            "node": "Process User Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process User Message": {
+      "main": [
+        [
+          {
+            "node": "Update Conversation with Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Conversation with Message": {
+      "main": [
+        [
+          {
+            "node": "Determine Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Generate Spec?": {
+      "true": [
+        [
+          {
+            "node": "Prompt for Specification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt for Specification": {
+      "main": [
+        [
+          {
+            "node": "Generate Specification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Specification": {
+      "main": [
+        [
+          {
+            "node": "Process Specification Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Specification Result": {
+      "main": [
+        [
+          {
+            "node": "Store Specification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Specification": {
+      "main": [
+        [
+          {
+            "node": "Update Conversation with Spec ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Conversation with Spec ID": {
+      "main": [
+        [
+          {
+            "node": "Prepare Spec Completion Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Spec Completion Response": {
+      "main": [
+        [
+          {
+            "node": "Send Spec Completion Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Specification": {
+      "main": [
+        [
+          {
+            "node": "Retrieve Specification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retrieve Specification": {
+      "main": [
+        [
+          {
+            "node": "Send Specification Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Format Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Response": {
+      "main": [
+        [
+          {
+            "node": "Send Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Conversation with Analysis": {
+      "main": [
+        [
+          {
+            "node": "Determine Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "Error Handler"
+  },
+  "tags": [
+    {
+      "name": "AI Assistant",
+      "color": "#ff9050"
+    }
+  ],
+  "pinData": {},
+  "versionId": "1c5i3ej0-8g7h-4e3e-9f5g-i0h9g1f0j1i2",
+  "triggerCount": 4,
+  "staticData": null,
+  "meta": {
+    "instanceId": "1a2b3c4d5e6f7g8h9i0j"
+  }
+}

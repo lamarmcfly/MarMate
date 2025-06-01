@@ -1,0 +1,1168 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "code/generate",
+        "options": {}
+      },
+      "id": "1a5f3af0-8c7d-4a3a-9b5c-e0d4c7b1f2e3",
+      "name": "Code Generation Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract data from the webhook payload\nconst data = $input.item.json.body || $input.item.json;\n\n// Validate required fields\nif (!data.specId && !data.specification) {\n  throw new Error('Either specId or specification is required');\n}\n\n// Generate a unique session ID\nconst sessionId = Date.now().toString(36) + Math.random().toString(36).substring(2);\n\n// Extract project information\nconst projectId = data.projectId || sessionId;\nconst userId = data.userId || 'anonymous';\nconst repositoryInfo = data.repositoryInfo || null;\n\n// Prepare the code generation session data\nreturn {\n  sessionId,\n  projectId,\n  userId,\n  specId: data.specId || null,\n  specification: data.specification || null,\n  repositoryInfo,\n  frameworks: data.frameworks || {\n    frontend: 'react',\n    backend: 'express',\n    database: 'postgresql'\n  },\n  status: 'pending',\n  timestamp: new Date().toISOString(),\n  files: [],\n  errors: []\n};"
+      },
+      "id": "2b6f4bg1-9d8e-5b4b-0c6d-f1e5d8c2g3f4",
+      "name": "Prepare Session Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "code_generation_sessions",
+        "columns": "id, project_id, user_id, spec_id, status, model_used, created_at",
+        "additionalFields": {}
+      },
+      "id": "3c7g5ch2-0e9f-6c5c-1d7e-g2f6e9d3h4g5",
+      "name": "Store Session",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        650,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"Prepare Session Data\"].json[\"specId\"]}}",
+              "value2": null,
+              "operation": "notEqual"
+            }
+          ]
+        }
+      },
+      "id": "4d8h6di3-1f0g-7d6d-2e8f-h3g7f0e4i5h6",
+      "name": "Has Spec ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        850,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "specifications",
+        "columns": "*",
+        "additionalFields": {}
+      },
+      "id": "5e9i7ej4-2g1h-8e7e-3f9g-i4h8g1f5j6i7",
+      "name": "Fetch Specification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Combine session data with specification content\nconst sessionData = $input.item.json;\nconst specData = $input.item.json.specification || $node[\"Fetch Specification\"].json[0].content;\n\n// Ensure we have specification data\nif (!specData) {\n  throw new Error('Failed to retrieve specification data');\n}\n\n// Merge the data\nreturn {\n  ...sessionData,\n  specification: specData,\n  status: 'analyzing'\n};"
+      },
+      "id": "6f0j8fk5-3h2i-9f8f-4g0h-j5i9h2g6k7j8",
+      "name": "Prepare Specification Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "code_generation_sessions",
+        "columns": "status",
+        "additionalFields": {}
+      },
+      "id": "7g1k9gl6-4i3j-0g9g-5h1i-k6j0i3h7l8k9",
+      "name": "Update Session Status to Analyzing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "operation": "create",
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 2000
+        }
+      },
+      "id": "8h2l0hm7-5j4k-1h0h-6i2j-l7k1j4i8m9l0",
+      "name": "Analyze Specification",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1650,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "={{\"content\": `You are a software architecture expert. Analyze the following project specification and identify all the files that need to be created for both frontend and backend implementation.\n\nProject Specification:\n${JSON.stringify($json.specification, null, 2)}\n\nFrameworks to use:\nFrontend: ${$json.frameworks.frontend}\nBackend: ${$json.frameworks.backend}\nDatabase: ${$json.frameworks.database}\n\nProvide your analysis as a JSON object with the following structure:\n{\n  \"project_structure\": {\n    \"frontend\": [\n      {\n        \"file_path\": \"string\",\n        \"file_type\": \"string\",\n        \"purpose\": \"string\",\n        \"dependencies\": [\"string\"]\n      }\n    ],\n    \"backend\": [\n      {\n        \"file_path\": \"string\",\n        \"file_type\": \"string\",\n        \"purpose\": \"string\",\n        \"dependencies\": [\"string\"]\n      }\n    ],\n    \"database\": [\n      {\n        \"file_path\": \"string\",\n        \"file_type\": \"string\",\n        \"purpose\": \"string\"\n      }\n    ],\n    \"config\": [\n      {\n        \"file_path\": \"string\",\n        \"file_type\": \"string\",\n        \"purpose\": \"string\"\n      }\n    ]\n  },\n  \"api_endpoints\": [\n    {\n      \"path\": \"string\",\n      \"method\": \"string\",\n      \"purpose\": \"string\",\n      \"request_body\": \"string\",\n      \"response\": \"string\"\n    }\n  ],\n  \"data_models\": [\n    {\n      \"name\": \"string\",\n      \"fields\": [\n        {\n          \"name\": \"string\",\n          \"type\": \"string\",\n          \"constraints\": [\"string\"]\n        }\n      ],\n      \"relationships\": [\n        {\n          \"related_model\": \"string\",\n          \"type\": \"string\",\n          \"foreign_key\": \"string\"\n        }\n      ]\n    }\n  ]\n}\n\nEnsure your response is valid JSON that can be parsed. Be comprehensive and include all necessary files for a complete implementation.`}"}
+      },
+      "id": "9i3m1in8-6k5l-2i1i-7j3k-m8l2k5j9n0m1",
+      "name": "Prompt for Analysis",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1650,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse the OpenAI response to extract the JSON analysis\nlet analysisResult;\ntry {\n  // Try to parse the completion text as JSON\n  const completionText = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n  analysisResult = JSON.parse(completionText);\n} catch (error) {\n  // If JSON parsing fails, try to extract JSON from the text\n  const completionText = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n  const jsonMatch = completionText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    try {\n      analysisResult = JSON.parse(jsonMatch[0]);\n    } catch (e) {\n      throw new Error(`Failed to parse analysis result: ${e.message}`);\n    }\n  } else {\n    throw new Error('Could not extract JSON from the analysis result');\n  }\n}\n\n// Update the session with analysis results\nreturn {\n  ...($input.item.json),\n  analysisResult,\n  status: 'generating_code'\n};"
+      },
+      "id": "0j4n2jo9-7l6m-3j2j-8k4l-n9m3l6k0o1n2",
+      "name": "Process Analysis Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1850,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "code_generation_sessions",
+        "columns": "status, result_summary",
+        "additionalFields": {}
+      },
+      "id": "1k5o3kp0-8m7n-4k3k-9l5m-o0n4m7l1p2o3",
+      "name": "Update Session with Analysis",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 5,
+        "options": {}
+      },
+      "id": "2l6p4lq1-9n8o-5l4l-0m6n-p1o5n8m2q3p4",
+      "name": "Split Frontend Files",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        250,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract frontend files from the analysis result\nconst sessionData = $input.item.json;\nconst frontendFiles = sessionData.analysisResult.project_structure.frontend || [];\n\n// Return the frontend files for batch processing\nreturn frontendFiles.map(file => ({\n  ...sessionData,\n  currentFile: file,\n  fileType: 'frontend'\n}));"
+      },
+      "id": "3m7q5mr2-0o9p-6m5m-1n7o-q2p6o9n3r4q5",
+      "name": "Prepare Frontend Files",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract backend files from the analysis result\nconst sessionData = $input.item.json;\nconst backendFiles = sessionData.analysisResult.project_structure.backend || [];\n\n// Return the backend files for batch processing\nreturn backendFiles.map(file => ({\n  ...sessionData,\n  currentFile: file,\n  fileType: 'backend'\n}));"
+      },
+      "id": "4n8r6ns3-1p0q-7n6n-2o8p-r3q7p0o4s5r6",
+      "name": "Prepare Backend Files",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract config files from the analysis result\nconst sessionData = $input.item.json;\nconst configFiles = sessionData.analysisResult.project_structure.config || [];\n\n// Return the config files for batch processing\nreturn configFiles.map(file => ({\n  ...sessionData,\n  currentFile: file,\n  fileType: 'config'\n}));"
+      },
+      "id": "5o9s7ot4-2q1r-8o7o-3p9q-s4r8q1p5t6s7",
+      "name": "Prepare Config Files",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract database files from the analysis result\nconst sessionData = $input.item.json;\nconst databaseFiles = sessionData.analysisResult.project_structure.database || [];\n\n// Return the database files for batch processing\nreturn databaseFiles.map(file => ({\n  ...sessionData,\n  currentFile: file,\n  fileType: 'database'\n}));"
+      },
+      "id": "6p0t8pu5-3r2s-9p8p-4q0r-t5s9r2q6u7t8",
+      "name": "Prepare Database Files",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "operation": "create",
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 4000
+        }
+      },
+      "id": "7q1u9qv6-4s3t-0q9q-5r1s-u6t0s3r7v8u9",
+      "name": "Generate File Content",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        650,
+        500
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "={{\"content\": `You are an expert software developer. Generate the code for the following file based on the project specification and file details.\n\nProject Specification:\n${JSON.stringify($json.specification, null, 2)}\n\nFile Details:\n${JSON.stringify($json.currentFile, null, 2)}\n\nFrameworks:\nFrontend: ${$json.frameworks.frontend}\nBackend: ${$json.frameworks.backend}\nDatabase: ${$json.frameworks.database}\n\nFile Type: ${$json.fileType}\n\nAPI Endpoints: ${JSON.stringify($json.analysisResult.api_endpoints, null, 2)}\n\nData Models: ${JSON.stringify($json.analysisResult.data_models, null, 2)}\n\nGenerate the complete code for the file at path: ${$json.currentFile.file_path}\n\nProvide ONLY the code content without any explanations or markdown formatting. The code should be production-ready, well-commented, and follow best practices for the specified framework.`}"}
+      },
+      "id": "8r2v0rw7-5t4u-1r0r-6s2t-v7u1t4s8w9v0",
+      "name": "Prompt for File Generation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        450,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Process the generated file content\nconst fileData = $input.item.json;\nconst generatedContent = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n\n// Create a file object\nconst file = {\n  file_path: fileData.currentFile.file_path,\n  file_type: fileData.currentFile.file_type,\n  content: generatedContent,\n  purpose: fileData.currentFile.purpose,\n  generated_at: new Date().toISOString()\n};\n\n// Return the file data\nreturn {\n  ...fileData,\n  generatedFile: file\n};"
+      },
+      "id": "9s3w1sx8-6u5v-2s1s-7t3u-w8v2u5t9x0w1",
+      "name": "Process Generated File",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        850,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "operation": "create",
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 2000
+        }
+      },
+      "id": "0t4x2ty9-7v6w-3t2t-8u4v-x9w3v6u0y1x2",
+      "name": "Static Analysis",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        500
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "={{\"content\": `You are a code quality expert. Perform static analysis on the following code and identify any issues, bugs, or improvements.\n\nFile Path: ${$json.generatedFile.file_path}\nFile Type: ${$json.generatedFile.file_type}\nLanguage/Framework: ${$json.fileType === 'frontend' ? $json.frameworks.frontend : $json.fileType === 'backend' ? $json.frameworks.backend : $json.fileType}\n\nCode:\n${$json.generatedFile.content}\n\nPerform a thorough analysis and provide your findings in the following JSON format:\n{\n  \"issues\": [\n    {\n      \"type\": \"error|warning|info\",\n      \"line\": \"line number or range\",\n      \"message\": \"description of the issue\",\n      \"suggestion\": \"suggested fix\",\n      \"severity\": \"high|medium|low\"\n    }\n  ],\n  \"quality_score\": \"0-100 score\",\n  \"recommendations\": [\"list of general recommendations\"]\n}\n\nIf no issues are found, return an empty issues array but still provide a quality score and any general recommendations for improvement.`}"}
+      },
+      "id": "1u5y3uz0-8w7x-4u3u-9v5w-y0x4w7v1z2y3",
+      "name": "Prompt for Static Analysis",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse the static analysis result\nlet analysisResult;\ntry {\n  // Try to parse the completion text as JSON\n  const completionText = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n  analysisResult = JSON.parse(completionText);\n} catch (error) {\n  // If JSON parsing fails, try to extract JSON from the text\n  const completionText = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n  const jsonMatch = completionText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    try {\n      analysisResult = JSON.parse(jsonMatch[0]);\n    } catch (e) {\n      // If still fails, create a default analysis result\n      analysisResult = {\n        issues: [],\n        quality_score: 70,\n        recommendations: ['Could not parse analysis result']\n      };\n    }\n  } else {\n    // Default analysis result\n    analysisResult = {\n      issues: [],\n      quality_score: 70,\n      recommendations: ['Could not extract analysis result']\n    };\n  }\n}\n\n// Add the analysis result to the file data\nreturn {\n  ...($input.item.json),\n  staticAnalysis: analysisResult\n};"
+      },
+      "id": "2v6z4va1-9x8y-5v4v-0w6x-z1y5x8w2a3z4",
+      "name": "Process Static Analysis",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$node[\"Process Static Analysis\"].json[\"staticAnalysis\"][\"issues\"].length}}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "3w7a5wb2-0y9z-6w5w-1x7y-a2z6y9x3b4a5",
+      "name": "Has Issues?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1650,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "completion",
+        "operation": "create",
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 4000
+        }
+      },
+      "id": "4x8b6xc3-1z0a-7x6x-2y8z-b3a7z0y4c5b6",
+      "name": "Fix Code Issues",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1850,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "={{\"content\": `You are a code quality expert. Fix the following issues in the code:\n\nFile Path: ${$json.generatedFile.file_path}\nFile Type: ${$json.generatedFile.file_type}\nLanguage/Framework: ${$json.fileType === 'frontend' ? $json.frameworks.frontend : $json.fileType === 'backend' ? $json.frameworks.backend : $json.fileType}\n\nOriginal Code:\n${$json.generatedFile.content}\n\nIssues Found:\n${JSON.stringify($json.staticAnalysis.issues, null, 2)}\n\nRecommendations:\n${JSON.stringify($json.staticAnalysis.recommendations, null, 2)}\n\nPlease provide the complete fixed code. Do not include any explanations or markdown formatting, just return the corrected code.`}"}
+      },
+      "id": "5y9c7yd4-2a1b-8y7y-3z9a-c4b8a1z5d6c7",
+      "name": "Prompt for Code Fix",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1850,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Process the fixed code\nconst fileData = $input.item.json;\nconst fixedContent = $input.item.json.text || $input.item.json.data.choices[0].message.content;\n\n// Update the file with fixed content\nconst updatedFile = {\n  ...fileData.generatedFile,\n  content: fixedContent,\n  fixed_at: new Date().toISOString(),\n  issues_fixed: fileData.staticAnalysis.issues.length\n};\n\n// Return the updated file data\nreturn {\n  ...fileData,\n  generatedFile: updatedFile\n};"
+      },
+      "id": "6z0d8ze5-3b2c-9z8z-4a0b-d5c9b2a6e7d8",
+      "name": "Process Fixed Code",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2050,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "code_files",
+        "columns": "project_id, file_path, file_content, language, status, created_at, metadata",
+        "additionalFields": {}
+      },
+      "id": "7a1e9af6-4c3d-0a9a-5b1c-e6d0c3b7f8e9",
+      "name": "Store Generated File",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"Prepare Session Data\"].json[\"repositoryInfo\"]}}",
+              "value2": null,
+              "operation": "notEqual"
+            }
+          ]
+        }
+      },
+      "id": "8b2f0bg7-5d4e-1b0b-6c2d-f7e1d4c8g9f0",
+      "name": "Has Repository Info?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        2450,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "repository",
+        "owner": "={{$node[\"Prepare Session Data\"].json[\"repositoryInfo\"][\"owner\"]}}",
+        "repository": "={{$node[\"Prepare Session Data\"].json[\"repositoryInfo\"][\"name\"]}}",
+        "filePath": "={{$node[\"Process Fixed Code\"].json[\"generatedFile\"][\"file_path\"] || $node[\"Process Generated File\"].json[\"generatedFile\"][\"file_path\"]}}",
+        "fileContent": "={{$node[\"Process Fixed Code\"].json[\"generatedFile\"][\"content\"] || $node[\"Process Generated File\"].json[\"generatedFile\"][\"content\"]}}",
+        "commitMessage": "={{`Auto-generated ${$node[\"Process Fixed Code\"].json[\"generatedFile\"][\"file_path\"] || $node[\"Process Generated File\"].json[\"generatedFile\"][\"file_path\"]}`}}",
+        "branch": "={{$node[\"Prepare Session Data\"].json[\"repositoryInfo\"][\"branch\"] || \"main\"}}",
+        "additionalParameters": {}
+      },
+      "id": "9c3g1ch8-6e5f-2c1c-7d3e-g8f2e5d9h0g1",
+      "name": "Commit to GitHub",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1,
+      "position": [
+        2650,
+        500
+      ],
+      "credentials": {
+        "githubApi": {
+          "id": "github-creds",
+          "name": "GitHub Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Update the file with commit information\nconst fileData = $input.item.json;\nconst commitResult = $node[\"Commit to GitHub\"].json;\n\n// Extract commit information\nconst commitInfo = {\n  sha: commitResult?.commit?.sha || null,\n  url: commitResult?.commit?.html_url || null,\n  committed_at: new Date().toISOString()\n};\n\n// Update the file with commit info\nconst updatedFile = {\n  ...fileData.generatedFile,\n  commit_info: commitInfo\n};\n\n// Return the updated file data\nreturn {\n  ...fileData,\n  generatedFile: updatedFile\n};"
+      },
+      "id": "0d4h2di9-7f6g-3d2d-8e4f-h9g3f6e0i1h2",
+      "name": "Process Commit Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2850,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "code_files",
+        "columns": "status, commit_hash, metadata",
+        "additionalFields": {}
+      },
+      "id": "1e5i3ej0-8g7h-4e3e-9f5g-i0h9g1f0j1i2",
+      "name": "Update File with Commit Info",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        3050,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "mergeByPosition",
+        "joinFields": [
+          {
+            "field1": "sessionId",
+            "field2": "sessionId"
+          }
+        ],
+        "outputDataFrom": "input2",
+        "options": {}
+      },
+      "id": "2f6j4fk1-9h8i-5f4f-0g6h-j1i0h2g1k2j3",
+      "name": "Merge Generated Files",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [
+        3250,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Count the number of files generated\nconst files = $input.item.json.map(item => item.generatedFile);\n\n// Get the original session data\nconst sessionData = $input.item.json[0];\n\n// Update the session with file generation results\nreturn {\n  ...sessionData,\n  files: files,\n  files_generated: files.length,\n  status: 'completed',\n  completed_at: new Date().toISOString()\n};"
+      },
+      "id": "3g7k5gl2-0i9j-6g5g-1h7i-k2j1i3h2l3k4",
+      "name": "Prepare Final Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        3450,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "code_generation_sessions",
+        "columns": "status, files_generated, completed_at, result_summary",
+        "additionalFields": {}
+      },
+      "id": "4h8l6hm3-1j0k-7h6h-2i8j-l3k2j4i3m4l5",
+      "name": "Update Session Status to Completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        3650,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "5i9m7in4-2k1l-8i7i-3j9k-m4l3k5j4n5m6",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        3850,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "=An error occurred: {{$error.message}}",
+        "errorDescription": "=Stack: {{$error.stack}}"
+      },
+      "id": "6j0n8jo5-3l2m-9j8j-4k0l-n5m4l6k5o6n7",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        250,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log the error\nconsole.error('Error in code generation workflow:', $input.item.json.errorMessage);\n\n// Update the session status to failed\nreturn {\n  id: $input.item.json.sessionId,\n  status: 'failed',\n  error_message: $input.item.json.errorMessage,\n  updated_at: new Date().toISOString()\n};"
+      },
+      "id": "7k1o9kp6-4m3n-0k9k-5l1m-o6n5m7l6p7o8",
+      "name": "Process Error",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        450,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "code_generation_sessions",
+        "columns": "status, error_message",
+        "additionalFields": {}
+      },
+      "id": "8l2p0lq7-5n4o-1l0l-6m2n-p7o6n8m7q8p9",
+      "name": "Update Session Status to Failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        650,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{$node[\"Process Error\"].json[\"error_message\"]}}\",\n  \"sessionId\": \"{{$node[\"Process Error\"].json[\"id\"]}}\"\n}",
+        "responseCode": 500,
+        "options": {}
+      },
+      "id": "9m3q1mr8-6o5p-2m1m-7n3o-q8p7o9n8r9q0",
+      "name": "Send Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        850,
+        700
+      ]
+    }
+  ],
+  "connections": {
+    "Code Generation Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Session Data": {
+      "main": [
+        [
+          {
+            "node": "Store Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Session": {
+      "main": [
+        [
+          {
+            "node": "Has Spec ID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Spec ID?": {
+      "true": [
+        [
+          {
+            "node": "Fetch Specification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Prepare Specification Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Specification": {
+      "main": [
+        [
+          {
+            "node": "Prepare Specification Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Specification Data": {
+      "main": [
+        [
+          {
+            "node": "Update Session Status to Analyzing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Session Status to Analyzing": {
+      "main": [
+        [
+          {
+            "node": "Prompt for Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt for Analysis": {
+      "main": [
+        [
+          {
+            "node": "Analyze Specification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Specification": {
+      "main": [
+        [
+          {
+            "node": "Process Analysis Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Analysis Result": {
+      "main": [
+        [
+          {
+            "node": "Update Session with Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Session with Analysis": {
+      "main": [
+        [
+          {
+            "node": "Prepare Frontend Files",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Backend Files",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Config Files",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Database Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Frontend Files": {
+      "main": [
+        [
+          {
+            "node": "Split Frontend Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Backend Files": {
+      "main": [
+        [
+          {
+            "node": "Split Frontend Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Config Files": {
+      "main": [
+        [
+          {
+            "node": "Split Frontend Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Database Files": {
+      "main": [
+        [
+          {
+            "node": "Split Frontend Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Frontend Files": {
+      "main": [
+        [
+          {
+            "node": "Prompt for File Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt for File Generation": {
+      "main": [
+        [
+          {
+            "node": "Generate File Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate File Content": {
+      "main": [
+        [
+          {
+            "node": "Process Generated File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Generated File": {
+      "main": [
+        [
+          {
+            "node": "Prompt for Static Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt for Static Analysis": {
+      "main": [
+        [
+          {
+            "node": "Static Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Static Analysis": {
+      "main": [
+        [
+          {
+            "node": "Process Static Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Static Analysis": {
+      "main": [
+        [
+          {
+            "node": "Has Issues?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Issues?": {
+      "true": [
+        [
+          {
+            "node": "Prompt for Code Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Store Generated File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt for Code Fix": {
+      "main": [
+        [
+          {
+            "node": "Fix Code Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fix Code Issues": {
+      "main": [
+        [
+          {
+            "node": "Process Fixed Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Fixed Code": {
+      "main": [
+        [
+          {
+            "node": "Store Generated File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Generated File": {
+      "main": [
+        [
+          {
+            "node": "Has Repository Info?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Repository Info?": {
+      "true": [
+        [
+          {
+            "node": "Commit to GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Merge Generated Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit to GitHub": {
+      "main": [
+        [
+          {
+            "node": "Process Commit Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Commit Result": {
+      "main": [
+        [
+          {
+            "node": "Update File with Commit Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update File with Commit Info": {
+      "main": [
+        [
+          {
+            "node": "Merge Generated Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Generated Files": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Final Result": {
+      "main": [
+        [
+          {
+            "node": "Update Session Status to Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Session Status to Completed": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Process Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Error": {
+      "main": [
+        [
+          {
+            "node": "Update Session Status to Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Session Status to Failed": {
+      "main": [
+        [
+          {
+            "node": "Send Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "Error Handler"
+  },
+  "tags": [
+    {
+      "name": "AI Assistant",
+      "color": "#ff9050"
+    }
+  ],
+  "pinData": {},
+  "versionId": "1c5i3ej0-8g7h-4e3e-9f5g-i0h9g1f0j1i2",
+  "triggerCount": 1,
+  "staticData": null,
+  "meta": {
+    "instanceId": "1a2b3c4d5e6f7g8h9i0j"
+  }
+}
